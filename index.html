@@ -743,6 +743,10 @@ function chainForRole(role, override) {
 // 회화는 모델이 지원하는 가장 낮은 thinking('minimal'), 분석은 높게('high'). 모델 세대별로 설정 형식이 다르다.
 function thinkingConfigFor(model, level) {
   if (!level || /tts/i.test(model)) return null;
+  // 이 모델이 전에 거부한 thinking 값은 건너뛴다 (400 헛걸음 방지)
+  const floor = modelCaps[model]?.thinkingFloor;
+  if (level !== 'high' && floor === 'none') return null;
+  if (level === 'minimal' && floor === 'low') level = 'low';
   if (/gemini-(1\.|2\.0)/i.test(model)) return null;
   if (/gemini-2\.5/i.test(model)) {
     if (level === 'high') return { thinkingBudget: -1 };
@@ -908,112 +912,309 @@ function noteResponder(model, role, fallbackUsed) {
 }
 const shortReason = e => (e?.status ? String(e.status) : e?.parseFail ? 'parse' : e?.streamBroken ? 'stream' : 'net');
 
+// ---- 모델 상태 기억 ----
+// 회화 호출 시간 제한: 4초 안에 대사가 없으면 다음 모델에도 동시 요청(헤징), 10초 안에 대사가 없으면 그 모델은 포기.
+// 대사 도착 후 HUD까지 20초. 스트리밍이 아닌 회화 호출(SOS·첫 질문 미리 준비)은 응답 전체 기준 12초.
+const FAST = { hedgeMs: 4000, firstReplyMs: 10000, fullMs: 12000, afterReplyMs: 20000 };
+const MODEL_DOWN_MS = 3 * 60000;     // 503·429·5xx·시간초과·네트워크 오류 → 3분간 뒤로 미룸
+const MODEL_MISSING_MS = 30 * 60000; // 404·미지원 → 30분간 뒤로 미룸
+const LS_MODEL_CAPS = 'rpg_model_caps';
+const modelHealth = new Map(); // model → { downUntil, reason }
+let modelCaps = {};            // model → { thinkingFloor: 'low' | 'none' } (거부된 thinking 값 기억, 기기에 저장)
+
+function loadModelCaps() {
+  try { const v = JSON.parse(localStorage.getItem(LS_MODEL_CAPS) || '{}'); modelCaps = isObj(v) ? v : {}; } catch { modelCaps = {}; }
+}
+function setThinkingFloor(model, floor) {
+  modelCaps[model] = { ...(modelCaps[model] || {}), thinkingFloor: floor };
+  try { localStorage.setItem(LS_MODEL_CAPS, JSON.stringify(modelCaps)); } catch {}
+}
+function markModelDown(model, e) {
+  let ms = MODEL_DOWN_MS;
+  if (e?.status === 404 || e?.status === 400) ms = MODEL_MISSING_MS;
+  if (e?.status === 429 && e.retryDelay) ms = Math.max(ms, e.retryDelay * 1000);
+  modelHealth.set(model, { downUntil: Date.now() + ms, reason: shortReason(e) });
+}
+const markModelUp = model => modelHealth.delete(model);
+const isModelDown = model => (modelHealth.get(model)?.downUntil || 0) > Date.now();
+// 최근 실패한 모델은 체인 뒤로 보낸다 (마지막 수단으로는 여전히 시도)
+const orderByHealth = chain => [...chain.filter(m => !isModelDown(m)), ...chain.filter(isModelDown)];
+function downModelsText() {
+  return [...modelHealth.entries()]
+    .filter(([, h]) => h.downUntil > Date.now())
+    .map(([m, h]) => `${m} (${h.reason}, ${Math.ceil((h.downUntil - Date.now()) / 60000)}분)`)
+    .join(', ');
+}
+
+function logAttempt(meta, model, status, startedAt, reason = '') {
+  if (!meta) return;
+  const row = { model, status: String(status), ms: Math.round(performance.now() - startedAt), reason: String(reason || '').slice(0, 120) };
+  meta.trace.push(row);
+  if (!['ok', 'cancel'].includes(row.status)) meta.attempts.push(row);
+}
+function prepMeta(meta, chain) {
+  if (!meta) return;
+  meta.requested = meta.requested || chain[0];
+  meta.attempts = meta.attempts || [];
+  meta.trace = meta.trace || [];
+}
+function finishMeta(meta, res, role, firstModel) {
+  noteResponder(res.model, role, res.model !== firstModel);
+  if (!meta) return;
+  meta.responder = res.model;
+  meta.tFull = performance.now();
+  if (meta.tReply == null) meta.tReply = meta.tFull;
+  if (res.streamed) meta.streamed = true;
+  if (res.partial) meta.partial = true;
+}
+
+/**
+ * 모델 1개에 대한 시도. 같은 모델 안에서만 재시도한다:
+ * thinking 값을 거부하면 한 단계 낮춰(기억), 스트림이 실패하면 일반 요청으로, JSON 파싱 실패는 1회.
+ * 스트리밍 중 "reply"가 완성되면 onReply. reply를 보낸 뒤 끊기면 { partial: true }.
+ */
+async function attemptModel(model, { contents, systemInstruction, schema, thinking, generationConfig = {}, raw, signal, wantStream, onReply, onUploaded, meta }) {
+  const startedAt = performance.now();
+  let level = thinking, parseRetried = false, useStream = wantStream, emitted = null;
+  for (let step = 0; step < 6; step++) {
+    const body = { contents, generationConfig: { ...generationConfig } };
+    if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
+    if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseSchema = schema; }
+    const tc = thinkingConfigFor(model, level);
+    if (tc) body.generationConfig.thinkingConfig = tc;
+    try {
+      if (useStream) {
+        const res = await requestModel(model, body, signal, {
+          stream: true,
+          onUploaded,
+          onText: acc => {
+            if (emitted != null) return;
+            const r = extractJsonStringField(acc, 'reply');
+            if (r == null) return;
+            emitted = r;
+            onReply && onReply(r);
+          }
+        });
+        const responder = normalizeModelId(res.modelVersion) || model;
+        let data = null;
+        if (res.text) { try { data = parseJsonLoose(res.text); } catch {} }
+        if (data) return { data, model: responder, streamed: true };
+        if (emitted != null) return { data: { reply: emitted }, model: responder, streamed: true, partial: true };
+        logAttempt(meta, model, 'stream', startedAt, `스트림 응답 비어 있음 (${res.blockReason || res.finishReason || 'empty'}) → 일반 요청`);
+        if (meta) meta.streamFallback = res.blockReason || res.finishReason || 'empty';
+        useStream = false;
+        continue;
+      }
+      const json = await requestModel(model, body, signal, { onUploaded });
+      const responder = normalizeModelId(json.modelVersion) || model;
+      if (raw) return { json, model: responder };
+      const text = extractText(json);
+      if (!text) {
+        const reason = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason || 'EMPTY';
+        throw new GeminiError(`빈 응답 (${reason})`, { parseFail: true, retryable: true, model });
+      }
+      if (!schema) return { text, model: responder };
+      try { return { data: parseJsonLoose(text), model: responder }; }
+      catch { throw new GeminiError('JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
+    } catch (e) {
+      if (isAbort(e)) throw e;
+      if (e.thinkingIssue && level) {
+        logAttempt(meta, model, e.status, startedAt, `thinking '${level}' 거부 → 한 단계 낮춤: ${e.message}`);
+        if (level === 'minimal') setThinkingFloor(model, 'low');
+        else if (level === 'low') setThinkingFloor(model, 'none');
+        level = lowerThinking(level);
+        continue;
+      }
+      if (useStream && emitted != null) return { data: { reply: emitted }, model, streamed: true, partial: true };
+      if (useStream && (e.streamBroken || e.status === 0)) {
+        logAttempt(meta, model, 'stream', startedAt, `스트림 실패 → 일반 요청: ${e.message}`);
+        if (meta) meta.streamFallback = shortReason(e);
+        useStream = false;
+        continue;
+      }
+      if (e.parseFail && !parseRetried) { parseRetried = true; continue; }
+      throw e;
+    }
+  }
+  throw new GeminiError('같은 모델 재시도 한도 초과', { retryable: true, model });
+}
+
 /**
  * 공통 호출 함수.
  * - schema가 있으면 JSON 모드 + responseSchema, 파싱 실패 시 같은 모델로 1회 재요청
- * - 429·500·503·404·모델 미지원이면 지수 백오프(1초→2초) 후 폴백 체인의 다음 모델로
- * - stream: { onReply } 를 주면 streamGenerateContent로 받아 "reply" 문자열이 닫히는 즉시 onReply 호출.
- *   스트리밍이 실패하면 같은 모델로 generateContent 재요청. reply를 이미 내보낸 뒤 끊기면 { partial: true }로 반환.
- * - meta: 계측 객체. requested / responder / attempts / tReqStart / tUploaded / tReply / tFull / streamed 등을 채운다.
+ * - 429·500·503·404·모델 미지원·시간초과면 폴백 체인의 다음 모델로 (대기 없이 바로).
+ *   체인을 다 돌아도 실패하면 지수 백오프(1초→2초) 후 한 바퀴 더.
+ * - 최근 실패한 모델은 몇 분간 체인 뒤로 보낸다.
+ * - fast: true (회화용) → 시간 제한 + 헤징. stream: { onReply } 면 streamGenerateContent로 대사를 먼저 받는다.
+ * - meta: 계측 객체 (requested / responder / attempts / trace / tReqStart / tUploaded / tReply / tFull ...)
  */
-async function callGemini({ role = 'chat', contents, systemInstruction, schema, thinking = null, generationConfig = {}, raw = false, signal, modelOverride, stream = null, meta = null, quiet = false } = {}) {
-  const chain = chainForRole(role, modelOverride);
-  if (meta) { meta.requested = meta.requested || chain[0]; meta.attempts = meta.attempts || []; }
-  const trackUpload = !!meta?.trackUpload;
-  const now = () => performance.now();
-  const finish = (responder, i, extra = {}) => {
-    noteResponder(responder, role, i > 0);
-    if (meta) {
-      meta.responder = responder;
-      meta.tFull = now();
-      if (meta.tReply == null) meta.tReply = meta.tFull;
-      Object.assign(meta, extra);
-    }
-  };
+async function callGemini(opts = {}) {
+  if (opts.fast) return callGeminiFast(opts);
+  const { role = 'chat', signal, meta = null, quiet = false, rounds = 2 } = opts;
+  const baseChain = chainForRole(role, opts.modelOverride);
+  prepMeta(meta, baseChain);
   let lastErr = null;
-  for (let i = 0; i < chain.length; i++) {
-    const model = chain[i];
-    let useThinking = thinking;
-    let parseRetried = false;
-    let useStream = !!(stream && schema && !raw);
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const body = { contents, generationConfig: { ...generationConfig } };
-      if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
-      if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseSchema = schema; }
-      const tc = thinkingConfigFor(model, useThinking);
-      if (tc) body.generationConfig.thinkingConfig = tc;
-      if (meta && meta.tReqStart == null) meta.tReqStart = now();
-      const onUploaded = trackUpload ? t => { if (meta.tUploaded == null) meta.tUploaded = t; } : null;
+  for (let round = 0; round < rounds; round++) {
+    if (round > 0) await sleep(1000 * 2 ** (round - 1), signal);
+    for (const model of orderByHealth(baseChain)) {
+      const t = performance.now();
+      if (meta && meta.tReqStart == null) meta.tReqStart = t;
+      const onUploaded = meta?.trackUpload ? at => { if (meta.tUploaded == null) meta.tUploaded = at; } : null;
       try {
-        if (useStream) {
-          const res = await requestModel(model, body, signal, {
-            stream: true,
-            onUploaded,
-            onText: acc => {
-              if (stream.replyEmitted) return;
-              const r = extractJsonStringField(acc, 'reply');
-              if (r == null) return;
-              stream.replyEmitted = true;
-              stream.reply = r;
-              if (meta) meta.tReply = now();
-              stream.onReply(r);
-            }
-          });
-          const responder = normalizeModelId(res.modelVersion) || model;
-          let data = null;
-          if (res.text) { try { data = parseJsonLoose(res.text); } catch {} }
-          if (data) { finish(responder, i, { streamed: true }); return { data, model: responder, streamed: true }; }
-          if (stream.replyEmitted) { finish(responder, i, { streamed: true, partial: true }); return { data: { reply: stream.reply }, model: responder, streamed: true, partial: true }; }
-          // 스트림은 끝났지만 쓸 수 있는 JSON이 없음 → 같은 모델로 일반 요청
-          if (meta) { meta.streamFallback = res.blockReason || res.finishReason || 'empty'; meta.attempts.push({ model, status: 'stream', reason: meta.streamFallback }); }
-          useStream = false;
-          continue;
-        }
-        const json = await requestModel(model, body, signal, { onUploaded });
-        const responder = normalizeModelId(json.modelVersion) || model;
-        if (raw) { finish(responder, i); return { json, model: responder }; }
-        const text = extractText(json);
-        if (!text) {
-          const reason = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason || 'EMPTY';
-          throw new GeminiError(`빈 응답 (${reason})`, { parseFail: true, retryable: true, model });
-        }
-        if (!schema) { finish(responder, i); return { text, model: responder }; }
-        let data;
-        try { data = parseJsonLoose(text); } catch { throw new GeminiError('JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
-        finish(responder, i);
-        return { data, model: responder };
+        const res = await attemptModel(model, { ...opts, wantStream: false, onUploaded, meta });
+        markModelUp(model);
+        logAttempt(meta, model, 'ok', t);
+        finishMeta(meta, res, role, baseChain[0]);
+        return res;
       } catch (e) {
         if (isAbort(e)) throw e;
         lastErr = e;
-        if (meta) meta.attempts.push({ model, status: shortReason(e), reason: String(e.message || '').slice(0, 80) });
-        if (e.thinkingIssue && useThinking) { useThinking = lowerThinking(useThinking); continue; }
-        if (useStream && stream.replyEmitted) {
-          // 대사는 이미 보여주고 읽는 중 → 다른 응답으로 바꾸지 않고 대사만 확정
-          finish(model, i, { streamed: true, partial: true });
-          return { data: { reply: stream.reply }, model, streamed: true, partial: true };
-        }
-        if (useStream && (e.streamBroken || e.status === 0)) {
-          if (meta) meta.streamFallback = shortReason(e);
-          useStream = false;
-          continue;
-        }
-        if (e.parseFail && !parseRetried) { parseRetried = true; continue; }
+        logAttempt(meta, model, shortReason(e), t, e.message);
         if (!e.retryable) throw friendlyError(e);
-        break;
+        markModelDown(model, e);
+        if (!quiet && e.status === 429) toastOnce(`429:${model}`, `⏳ ${model} 요청 한도 초과${e.retryDelay ? ` — ${Math.ceil(e.retryDelay)}초 후 재사용 가능` : ''}. 다른 모델로 전환할게요`, 'warn', 30000);
       }
-    }
-    if (i < chain.length - 1) {
-      if (!quiet) {
-        if (lastErr?.status === 429) {
-          toast(`⏳ ${model} 요청 한도 초과${lastErr.retryDelay ? ` — ${Math.ceil(lastErr.retryDelay)}초 후 재사용 가능` : ''}. ${chain[i + 1]}(으)로 전환할게요`, 'warn', 5000);
-        } else {
-          toast(`⚠️ ${model} 응답 실패 → ${chain[i + 1]}(으)로 전환`, 'warn');
-        }
-      }
-      await sleep(Math.min(1000 * 2 ** i, 2000), signal);
     }
   }
   throw friendlyError(lastErr);
+}
+
+/** 회화용: 모델별 시간 제한 + 헤징(대사가 늦으면 다음 모델에도 동시 요청, 먼저 온 쪽 사용) */
+function callGeminiFast(opts) {
+  const { role = 'chat', schema, signal, meta = null, quiet = false, stream = null, thinking } = opts;
+  const wantStream = !!(stream && schema && !opts.raw);
+  const slow = thinking === 'high' ? 3 : 1; // 딥토크(분석 모델·thinking high)는 제한을 넉넉히
+  const baseChain = chainForRole(role, opts.modelOverride);
+  prepMeta(meta, baseChain);
+  return new Promise((resolve, reject) => {
+    let settled = false, winner = null, lastErr = null, round = 0, queue = orderByHealth(baseChain), qi = 0;
+    const live = new Set();
+    const onOuterAbort = () => {
+      for (const a of live) { a.cancelled = true; a.ac.abort(); }
+      if (!settled) { settled = true; reject(new DOMException('Aborted', 'AbortError')); }
+    };
+    if (signal) {
+      if (signal.aborted) { onOuterAbort(); return; }
+      signal.addEventListener('abort', onOuterAbort, { once: true });
+    }
+    // 이긴 요청 외에는 취소. 헤징 시점이 지나도록 대사가 없던 모델은 "느림"으로 기억해 다음 턴부터 뒤로 미룬다
+    const cancelOthers = keep => {
+      for (const o of live) {
+        if (o === keep || o.cancelled) continue;
+        o.cancelled = true;
+        clearTimeout(o.hedgeT);
+        clearTimeout(o.deadT);
+        const slowOne = o.reply == null && performance.now() - o.t >= o.hedgeMs;
+        if (slowOne) markModelDown(o.model, { status: 'slow' });
+        logAttempt(meta, o.model, 'cancel', o.t, slowOne ? '대사가 늦어 다른 모델 응답 사용 → 취소 (잠시 뒤로 미룸)' : '다른 모델이 먼저 응답 → 취소');
+        o.ac.abort();
+      }
+    };
+    const settle = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onOuterAbort);
+      cancelOthers(winner);
+      if (winner) { clearTimeout(winner.hedgeT); clearTimeout(winner.deadT); }
+      fn(val);
+    };
+    const armDeadline = (a, ms) => {
+      clearTimeout(a.deadT);
+      a.deadT = setTimeout(() => { a.timedOut = true; a.ac.abort(); }, ms);
+    };
+    const launchNext = () => {
+      if (settled || winner) return false;
+      while (qi < queue.length) {
+        const model = queue[qi++];
+        if ([...live].some(a => a.model === model)) continue;
+        run(model);
+        return true;
+      }
+      return false;
+    };
+    const afterFailure = () => {
+      if (settled || winner) return;
+      if (live.size < 2) launchNext();
+      if (live.size > 0) return;
+      if (round < 1) { // 체인을 다 돌아도 실패 → 1초 백오프 후 한 바퀴 더
+        round++;
+        queue = orderByHealth(baseChain);
+        qi = 0;
+        sleep(1000, signal).then(() => { if (!settled) launchNext(); }, () => {});
+        return;
+      }
+      settle(reject, friendlyError(lastErr));
+    };
+    const run = model => {
+      const a = { model, ac: new AbortController(), t: performance.now(), reply: null, timedOut: false, cancelled: false };
+      live.add(a);
+      if (meta && meta.tReqStart == null) meta.tReqStart = a.t;
+      const hedgeMs = (wantStream ? FAST.hedgeMs : FAST.hedgeMs + 1000) * slow;
+      const deadMs = (wantStream ? FAST.firstReplyMs : FAST.fullMs) * slow;
+      a.hedgeMs = hedgeMs;
+      a.hedgeT = setTimeout(() => { if (!settled && !winner && launchNext() && meta) meta.hedged = true; }, hedgeMs);
+      armDeadline(a, deadMs);
+      attemptModel(model, {
+        ...opts,
+        wantStream,
+        signal: a.ac.signal,
+        meta,
+        onUploaded: at => {
+          // 오디오 업로드가 끝난 시점부터 시간 제한을 다시 잰다 (느린 회선에서 업로드 때문에 포기하지 않도록)
+          if (meta?.trackUpload && meta.tUploaded == null) meta.tUploaded = at;
+          if (meta?.trackUpload && a.reply == null) {
+            armDeadline(a, deadMs);
+            clearTimeout(a.hedgeT);
+            a.hedgeT = setTimeout(() => { if (!settled && !winner && launchNext() && meta) meta.hedged = true; }, hedgeMs);
+          }
+        },
+        onReply: r => {
+          if (settled || (winner && winner !== a)) return;
+          winner = a;
+          a.reply = r;
+          clearTimeout(a.hedgeT);
+          armDeadline(a, FAST.afterReplyMs * slow);
+          cancelOthers(a);
+          if (meta) meta.tReply = performance.now();
+          stream.onReply(r);
+        }
+      }).then(res => {
+        live.delete(a);
+        clearTimeout(a.hedgeT);
+        clearTimeout(a.deadT);
+        if (settled || (winner && winner !== a)) return;
+        winner = a;
+        markModelUp(model);
+        logAttempt(meta, model, 'ok', a.t);
+        finishMeta(meta, res, role, baseChain[0]);
+        settle(resolve, res);
+      }, e => {
+        live.delete(a);
+        clearTimeout(a.hedgeT);
+        clearTimeout(a.deadT);
+        if (settled) return;
+        if (winner === a) { // 대사는 이미 나갔는데 HUD 전에 끊김/시간초과 → 대사만 확정
+          logAttempt(meta, model, a.timedOut ? 'timeout' : shortReason(e), a.t, a.timedOut ? `대사 후 HUD ${FAST.afterReplyMs * slow / 1000}초 초과` : e.message);
+          const res = { data: { reply: a.reply }, model, streamed: true, partial: true };
+          finishMeta(meta, res, role, baseChain[0]);
+          settle(resolve, res);
+          return;
+        }
+        if (a.cancelled) return;
+        if (isAbort(e) && !a.timedOut) return;
+        const err = a.timedOut
+          ? new GeminiError(`${wantStream ? '대사' : '응답'} ${deadMs / 1000}초 초과`, { status: 'timeout', retryable: true, model })
+          : e;
+        lastErr = err;
+        logAttempt(meta, model, shortReason(err), a.t, err.message);
+        if (!err.retryable) { settle(reject, friendlyError(err)); return; }
+        markModelDown(model, err);
+        if (!quiet && err.status === 429) toastOnce(`429:${model}`, `⏳ ${model} 요청 한도 초과${err.retryDelay ? ` — ${Math.ceil(err.retryDelay)}초 후 재사용 가능` : ''}. 다른 모델로 전환할게요`, 'warn', 30000);
+        afterFailure();
+      });
+    };
+    launchNext();
+  });
 }
 
 async function fetchModelList() {
@@ -1066,7 +1267,8 @@ async function geminiTTS(text, voiceName) {
     },
     raw: true,
     meta,
-    quiet: true
+    quiet: true,
+    rounds: 1
   });
   const part = (json?.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data || p.inline_data?.data);
   const inline = part?.inlineData || part?.inline_data;
@@ -1082,7 +1284,7 @@ const audio = {
   analyser: null, analyserSource: null, monitorTimer: null,
   speechDetected: false, lastLoudAt: 0, recStartedAt: 0,
   currentSource: null, playResolve: null, speechUnlocked: false,
-  ttsCache: new Map(), ttsInflight: new Map()
+  ttsCache: new Map(), ttsInflight: new Map(), playGen: 0
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const stt = { active: null, cancelled: false };
@@ -1392,14 +1594,27 @@ function abortable(promise, signal) {
   });
 }
 
+// 대사를 [첫 문장, 나머지]로 나눈다. 첫 문장이 3단어 이하면 다음 문장과 합친다. ("2.5"처럼 공백 없는 마침표는 나누지 않음)
+function splitForTts(text) {
+  const parts = String(text).replace(/([.!?…]+["'”’)\]]*)\s+/g, '$1\u0000').split('\u0000').map(x => x.trim()).filter(Boolean);
+  if (parts.length < 2) return [String(text)];
+  let first = parts[0], i = 1;
+  while (i < parts.length && first.split(/\s+/).length <= 3) first += ` ${parts[i++]}`;
+  const rest = parts.slice(i).join(' ');
+  return rest ? [first, rest] : [first];
+}
+
 /**
  * reply 음성 출력. 설정의 TTS 선호에 따라 Gemini TTS(속도/품질) 또는 브라우저 음성.
- * Gemini TTS 실패 시 speechSynthesis로 폴백. 반환값 'gemini' | 'browser' | 'none'
- * metric을 주면 tTtsStart / tTtsReady / tPlay / ttsMode / ttsModel 을 기록한다.
+ * Gemini TTS는 문장 단위로 나눠 동시에 생성하고, 첫 문장이 준비되는 즉시 재생한 뒤 나머지를 이어 재생한다.
+ * 첫 문장 TTS가 실패하면 전체를 speechSynthesis로 폴백. 반환값 'gemini' | 'browser' | 'none'
+ * metric을 주면 tTtsStart / tTtsReady(첫 문장) / tPlay / ttsMode / ttsModel 을 기록한다.
  */
 async function speak(text, { voice, signal, onStart, quietFallback = false, metric = null } = {}) {
   if (!text) return 'none';
   const voiceName = voice || state.settings.voiceName;
+  const gen = ++audio.playGen; // 새 speak가 시작되면 이전 speak의 남은 문장은 재생하지 않는다
+  const stillMine = () => gen === audio.playGen && !signal?.aborted;
   if (state.settings.ttsPreference === 'browser') {
     if (metric) metric.ttsMode = 'browser';
     onStart && onStart('browser');
@@ -1407,21 +1622,14 @@ async function speak(text, { voice, signal, onStart, quietFallback = false, metr
     return 'browser';
   }
   if (metric) metric.tTtsStart = performance.now();
+  const chunks = splitForTts(text);
+  const jobs = chunks.map(c => withTimeout(getTtsAudio(c, voiceName), TTS_TIMEOUT_MS, 'TTS 응답'));
+  jobs.forEach(j => j.catch(() => {}));
+  let first;
   try {
-    const r = await abortable(withTimeout(getTtsAudio(text, voiceName), TTS_TIMEOUT_MS, 'TTS 응답'), signal);
-    if (signal?.aborted) return 'none';
-    if (metric) {
-      metric.tTtsReady = performance.now();
-      metric.ttsMode = r.cached ? 'gemini(캐시)' : 'gemini';
-      metric.ttsModel = r.model;
-      const failed = (r.attempts || []).map(a => `${a.model}:${a.status}`);
-      if (failed.length) metric.ttsFallback = `${r.requested} → ${r.model} (${failed.join(', ')})`;
-    }
-    onStart && onStart('gemini');
-    await playBuffer(r.buffer, metric);
-    return 'gemini';
+    first = await abortable(jobs[0], signal);
   } catch (e) {
-    if (isAbort(e) || signal?.aborted) return 'none';
+    if (isAbort(e) || !stillMine()) return 'none';
     console.warn('TTS fallback', e);
     if (metric) { metric.tTtsReady = performance.now(); metric.ttsMode = 'browser(폴백)'; metric.ttsFallback = `Gemini TTS 실패: ${String(e.message).slice(0, 60)}`; }
     if (!quietFallback) toastOnce('tts-fallback', `🔊 Gemini 음성 실패 → 브라우저 음성으로 대체 (${e.message})`, 'warn', 60000);
@@ -1429,6 +1637,29 @@ async function speak(text, { voice, signal, onStart, quietFallback = false, metr
     await speakBrowser(text, metric);
     return 'browser';
   }
+  if (!stillMine()) return 'none';
+  if (metric) {
+    metric.tTtsReady = performance.now();
+    metric.ttsMode = `${first.cached ? 'gemini(캐시)' : 'gemini'}${chunks.length > 1 ? ` ·${chunks.length}분할` : ''}`;
+    metric.ttsModel = first.model;
+    const failed = (first.attempts || []).map(a => `${a.model}:${a.status}`);
+    if (failed.length) metric.ttsFallback = `${first.requested} → ${first.model} (${failed.join(', ')})`;
+  }
+  onStart && onStart('gemini');
+  await playBuffer(first.buffer, metric);
+  for (let k = 1; k < jobs.length; k++) {
+    if (!stillMine()) return 'gemini';
+    let r;
+    try { r = await abortable(jobs[k], signal); }
+    catch (e) {
+      if (isAbort(e) || !stillMine()) return 'gemini';
+      await speakBrowser(chunks[k]); // 남은 문장만 브라우저 음성으로
+      continue;
+    }
+    if (!stillMine()) return 'gemini';
+    await playBuffer(r.buffer);
+  }
+  return 'gemini';
 }
 
 function sttErrorMsg(code) {
@@ -1607,11 +1838,14 @@ function startOpeningPrefetch(topic) {
     thinking: role === 'analysis' ? 'high' : 'minimal',
     signal: entry.abort.signal,
     meta: entry.meta,
-    quiet: true
+    quiet: true,
+    fast: true
   }).then(r => {
-    // 대사 음성도 미리 받아 둔다 (브라우저 음성 모드 제외)
+    // 대사 음성도 미리 받아 둔다 (브라우저 음성 모드 제외, 문장 단위)
     const reply = String(r.data?.reply || '').trim();
-    if (reply && runtime.prefetch === entry && state.settings.ttsPreference !== 'browser') getTtsAudio(reply, state.settings.voiceName).catch(() => {});
+    if (reply && runtime.prefetch === entry && state.settings.ttsPreference !== 'browser') {
+      splitForTts(reply).forEach(c => getTtsAudio(c, state.settings.voiceName).catch(() => {}));
+    }
     return r;
   });
   entry.promise.catch(() => {});
@@ -1717,7 +1951,7 @@ async function requestOpening() {
         if (!S || S.id !== sid) return;
         data = r.data;
         const t = performance.now();
-        Object.assign(m, { prefetched: true, requested: pf.meta.requested, responder: r.model, attempts: pf.meta.attempts || [], tReqStart: m.t0, tReply: t, tFull: t });
+        Object.assign(m, { prefetched: true, requested: pf.meta.requested, responder: r.model, attempts: pf.meta.attempts || [], trace: pf.meta.trace || [], hedged: pf.meta.hedged, tReqStart: m.t0, tReply: t, tFull: t });
         noteResponder(r.model, S.chatRole, (pf.meta.attempts || []).length > 0);
       } catch (e) {
         if (!S || S.id !== sid) return;
@@ -1734,6 +1968,7 @@ async function requestOpening() {
         thinking: chatThinking(),
         signal: S.abort.signal,
         meta: m,
+        fast: true,
         stream: { onReply: line.show }
       });
       if (!S || S.id !== sid) return;
@@ -1859,6 +2094,7 @@ async function processUserTurn(input) {
       thinking: chatThinking(),
       signal: S.abort.signal,
       meta: m,
+      fast: true,
       stream: { onReply: line.show }
     });
     if (!S || S.id !== sid) return;
@@ -2034,6 +2270,7 @@ async function doClosing() {
       thinking: chatThinking(),
       signal: S.abort.signal,
       meta: m,
+      fast: true,
       stream: { onReply: line.show }
     });
     if (!S || S.id !== sid) return;
@@ -2158,16 +2395,23 @@ const msCell = v => (v == null ? '-' : Math.round(v));
 const secText = v => (v == null ? '-' : `${(v / 1000).toFixed(1)}s`);
 // 스트림만 끊기고 같은 모델 일반 요청으로 복구된 건 '방식' 열에 표시하고, 여기엔 모델/HTTP 실패만 남긴다
 const modelFailures = m => (m.attempts || []).filter(a => a.status !== 'stream');
+const shortModel = id => String(id || '').replace(/^gemini-/, '');
+// 시도 내역: "3.8-flash 503 0.6s → 3.6-flash ok 2.1s"
+function metricTrace(m) {
+  if (!m.trace?.length) return '-';
+  return m.trace.map(t => `${shortModel(t.model)} ${t.status} ${(t.ms / 1000).toFixed(1)}s`).join(' → ');
+}
 function metricFallbackText(m) {
   const fails = modelFailures(m);
-  if (!fails.length) return '-';
+  if (!fails.length) return m.responder && m.requested && m.responder !== m.requested ? `${m.requested} → ${m.responder} (헤징)` : '-';
   return `${m.requested} → ${m.responder || '실패'} (${fails.map(a => `${a.model}:${a.status}`).join(', ')})`;
 }
 function metricMethod(m) {
-  if (m.prefetched) return '미리 준비';
-  if (m.streamed) return m.partial ? '스트림(부분)' : '스트림';
-  if (m.streamFallback) return `일반(스트림 실패:${m.streamFallback})`;
-  return '일반';
+  const hedge = m.hedged ? '+헤징' : '';
+  if (m.prefetched) return `미리 준비${hedge}`;
+  if (m.streamed) return `${m.partial ? '스트림(부분)' : '스트림'}${hedge}`;
+  if (m.streamFallback) return `일반(스트림 실패:${m.streamFallback})${hedge}`;
+  return `일반${hedge}`;
 }
 function metricRow(m) {
   const p = metricParts(m);
@@ -2184,6 +2428,8 @@ function metricRow(m) {
     '방식': metricMethod(m),
     'TTS': m.ttsMode ? `${m.ttsMode}${m.ttsModel ? ` ${m.ttsModel}` : ''}` : '-',
     '폴백': metricFallbackText(m),
+    '시도 내역': metricTrace(m),
+    '실패 메시지': (m.attempts || []).map(a => `${shortModel(a.model)}:${a.reason}`).join(' | ') || '-',
     'TTS 폴백': m.ttsFallback || '-',
     '오류': m.error || '-'
   };
@@ -2210,18 +2456,19 @@ function renderDebugUI() {
   if (!runtime.debugOpen) return;
   const rows = runtime.metrics.slice(-10).reverse();
   if (!rows.length) { panel.innerHTML = '<div class="text-slate-400 p-1">아직 측정된 턴이 없어요</div>'; return; }
-  const cols = ['#', '종류', '입력', '업로드', '대사', 'HUD', 'TTS', '총', '모델', '방식', '폴백'];
+  const cols = ['#', '종류', '입력', '업로드', '대사', 'HUD', 'TTS', '총', '모델', '방식', '시도 내역'];
   panel.innerHTML = `
     <table class="border-collapse whitespace-nowrap">
       <thead><tr>${cols.map(c => `<th class="text-left text-slate-400 font-normal px-1.5 py-1 border-b border-slate-700">${c}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(m => {
         const p = metricParts(m);
         const cells = [m.id, METRIC_KIND[m.kind] || m.kind, METRIC_INPUT[m.inputType] || '-', msCell(p.upload), msCell(p.gemini), msCell(p.hud),
-          m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricFallbackText(m)];
+          m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricTrace(m)];
         return `<tr class="${m.error ? 'text-rose-300' : 'text-slate-200'}">${cells.map(c => `<td class="px-1.5 py-1 border-b border-slate-800">${esc(c)}</td>`).join('')}</tr>`;
       }).join('')}</tbody>
     </table>
-    <div class="text-slate-500 px-1.5 pt-1">단위 ms · 총 = 입력 끝 → 재생 명령 · 전체 기록은 console.table</div>`;
+    <div class="text-slate-500 px-1.5 pt-1">단위 ms · 총 = 입력 끝 → 재생 명령 · 실패 메시지 등 전체 기록은 console.table</div>
+    ${downModelsText() ? `<div class="text-amber-300/90 px-1.5 pt-1">⏭ 잠시 뒤로 미룬 모델: ${esc(downModelsText())}</div>` : ''}`;
 }
 function toggleDebugPanel() {
   runtime.debugOpen = !runtime.debugOpen;
@@ -2486,7 +2733,8 @@ async function askSos() {
       contents: [{ role: 'user', parts: [{ text: `Conversation topic: "${S?.topic.title || 'free talk'}" (Stage ${S?.stage || state.settings.stage}).\nMy friend just said: "${lastAi}"\nWhat I want to say (Korean): ${q}` }] }],
       systemInstruction: SOS_SYSTEM,
       schema: SOS_SCHEMA,
-      thinking: 'minimal'
+      thinking: 'minimal',
+      fast: true
     });
     const items = (Array.isArray(data?.expressions) ? data.expressions : []).filter(x => x && x.expression).slice(0, 3);
     if (!items.length) throw new Error('표현을 받지 못했어요');
@@ -2711,7 +2959,8 @@ async function generateReport(draft) {
       contents: [{ role: 'user', parts: [{ text: buildReportPrompt(draft) }] }],
       systemInstruction: REPORT_SYSTEM,
       schema: reportSchema(!!draft.topic.isTemp),
-      thinking: 'high'
+      thinking: 'high',
+      rounds: 3
     });
     const report = normalizeReport(data, draft);
     const result = applyReport(draft, report);
@@ -4111,6 +4360,7 @@ function bindEvents() {
 function init() {
   loadState();
   loadModelCache();
+  loadModelCaps();
   bindEvents();
   renderHeader();
   renderNav();
