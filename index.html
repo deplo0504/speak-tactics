@@ -128,6 +128,7 @@ const DEFAULT_MODELS = {
   analysis: 'gemini-3.8-flash',
   tts: 'gemini-3.8-flash-lite-tts',      // 속도 우선(저지연) TTS
   ttsQuality: 'gemini-3.8-flash-tts',    // 품질 우선 TTS
+  transcribe: 'gemini-3.5-flash-lite',   // 녹음 받아쓰기 전용 (대화 맥락 없이 듣기만)
   fallbackChain: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
 };
 const LEGACY_TTS_DEFAULT = 'gemini-3.8-flash-tts';
@@ -192,7 +193,7 @@ const CUSTOM_TRACK = { emoji: '✍️', name: 'Free Talk', nameKo: '직접 입�
   concept: 'Free talk about something the user brought up themselves (it may be written in Korean — always talk in English). Chat about it like a friend catching up: what happened, the details, how it felt, what comes next.' };
 
 const INPUT_MODES = {
-  record: { icon: '🎙️', label: '녹음 전송', desc: '녹음 → Gemini가 직접 듣고 발음까지 평가 (아이폰 권장)' },
+  record: { icon: '🎙️', label: '녹음 전송', desc: '녹음 → 대화 맥락 없이 받아쓰기(전사) → 대답 · 발음 평가 포함 (아이폰 권장)' },
   browserStt: { icon: '⚡', label: '브라우저 음성 인식', desc: '브라우저가 받아쓴 텍스트만 전송 · 발음 평가 불가' },
   keyboard: { icon: '⌨️', label: '키보드', desc: '마이크가 안 될 때 타이핑으로 대화' }
 };
@@ -241,7 +242,7 @@ function defaultSettings() {
     showSubtitles: true,
     voiceName: DEFAULT_VOICE,
     ttsPreference: 'speed',               // 'quality' | 'speed' | 'browser'
-    models: { chat: DEFAULT_MODELS.chat, analysis: DEFAULT_MODELS.analysis, tts: DEFAULT_MODELS.tts, ttsQuality: DEFAULT_MODELS.ttsQuality, fallbackChain: [...DEFAULT_MODELS.fallbackChain] },
+    models: { chat: DEFAULT_MODELS.chat, analysis: DEFAULT_MODELS.analysis, tts: DEFAULT_MODELS.tts, ttsQuality: DEFAULT_MODELS.ttsQuality, transcribe: DEFAULT_MODELS.transcribe, fallbackChain: [...DEFAULT_MODELS.fallbackChain] },
     useAnalysisModelForDeepTalk: false,
     onlyCoreTracksInRandom: false,
     showDebugTiming: true
@@ -305,7 +306,7 @@ function migrateState(raw) {
     st.models.tts = DEFAULT_MODELS.tts;
     st.models.ttsQuality = LEGACY_TTS_DEFAULT;
   }
-  for (const r of ['chat', 'analysis', 'tts', 'ttsQuality']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
+  for (const r of ['chat', 'analysis', 'tts', 'ttsQuality', 'transcribe']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
   if (!TTS_PREFS[st.ttsPreference]) st.ttsPreference = 'speed';
   st.models.fallbackChain = (Array.isArray(st.models.fallbackChain) ? st.models.fallbackChain : []).map(normalizeModelId).filter(Boolean);
   if (!st.models.fallbackChain.length) st.models.fallbackChain = [...DEFAULT_MODELS.fallbackChain];
@@ -731,6 +732,7 @@ function modelForRole(role) {
   if (role === 'analysis') return m.analysis || DEFAULT_MODELS.analysis;
   if (role === 'tts') return (state.settings.ttsPreference === 'quality' ? m.ttsQuality : m.tts) || DEFAULT_MODELS.tts;
   if (role === 'ttsQuality') return m.ttsQuality || DEFAULT_MODELS.ttsQuality;
+  if (role === 'transcribe') return m.transcribe || DEFAULT_MODELS.transcribe;
   return m.chat || DEFAULT_MODELS.chat;
 }
 function chainForRole(role, override) {
@@ -906,7 +908,7 @@ function friendlyError(e) {
 }
 
 function noteResponder(model, role, fallbackUsed) {
-  if (role === 'tts') return;
+  if (role === 'tts' || role === 'transcribe') return;
   runtime.lastResponder = { model, role, fallbackUsed, at: Date.now() };
   renderCornerBadge();
 }
@@ -1083,7 +1085,7 @@ async function callGemini(opts = {}) {
 function callGeminiFast(opts) {
   const { role = 'chat', schema, signal, meta = null, quiet = false, stream = null, thinking } = opts;
   const wantStream = !!(stream && schema && !opts.raw);
-  const slow = thinking === 'high' ? 3 : 1; // 딥토크(분석 모델·thinking high)는 제한을 넉넉히
+  const slow = (thinking === 'high' ? 3 : 1) * (opts.timeScale || 1); // 딥토크(thinking high)·긴 녹음은 제한을 넉넉히
   const baseChain = chainForRole(role, opts.modelOverride);
   prepMeta(meta, baseChain);
   return new Promise((resolve, reject) => {
@@ -1804,7 +1806,8 @@ const historyToContents = history => history.map(h => ({ role: h.role, parts: [{
 
 function buildTurnNote(kind, timeUp) {
   let note;
-  if (kind === 'audio') note = '[Voice turn] My answer is in the attached audio. Put exactly what I said (verbatim, errors included, nothing fixed) in "transcript"; if the audio is silent or unintelligible, set transcript to "". Give pronunciation/intonation feedback in "pronunciationNoteKo" (or null).';
+  if (kind === 'voiceText') note = '[Voice turn] I spoke my answer out loud. Below is a verbatim transcript made separately from my recording (my mistakes are kept; [inaudible] marks parts that could not be heard). Copy it into "transcript" exactly. Do not assume I said anything that is not in it; if most of it is [inaudible], briefly ask me to say it again. pronunciationNoteKo must be null.';
+  else if (kind === 'edited') note = '[Corrected turn] My voice answer was mis-transcribed, so I typed what I actually said below. Copy it into "transcript" as-is and respond to this version. pronunciationNoteKo must be null; set signals.nuance to 0.';
   else if (kind === 'stt') note = '[Browser speech-to-text turn] My answer below came from the browser speech recognizer and may contain recognition errors. Copy it into "transcript" as-is. pronunciationNoteKo must be null; set signals.nuance to 0.';
   else note = '[Typed turn] I typed my answer below (no audio). Copy it into "transcript" as-is. pronunciationNoteKo must be null; set signals.nuance to 0.';
   if (timeUp) note += ' [TIME IS UP] In "reply": react briefly to what I said, then wrap up the chat warmly in 1–2 short sentences. Do NOT ask a question.';
@@ -1922,7 +1925,7 @@ function makeLineStarter(sid, metric, onShown) {
     if (!S || S.id !== sid || line.reply != null || !reply) return;
     line.reply = reply;
     onShown && onShown(reply);
-    appendAiBubble(reply);
+    line.logIdx = appendAiBubble(reply);
     line.speakP = aiSpeak(reply, metric).then(() => {
       if (metric) { metric.speakEnded = true; maybeFinalizeMetric(metric); }
       if (S && S.id === sid && !S.timeUp && !S.closing && (S.status === 'speaking' || S.status === 'processing')) {
@@ -2022,11 +2025,69 @@ async function replayText(text) {
   checkTimeUpWhenIdle();
 }
 
-function normalizeTurn(d, localTranscript, inputType) {
+// ---- 듣기(전사)와 대답을 분리 ----
+// 녹음은 대화 기록 없이 전사 전용 호출로 먼저 받아쓴다. 대화 맥락이 없으니 "그럴듯한 말"로 지어낼 여지가 없다.
+const TRANSCRIBE_SYSTEM = `You are a precise speech-to-text transcriber. You hear one short recording of a Korean adult practicing spoken English.
+RULES
+- Write EXACTLY the words that were spoken, in order. Keep grammar mistakes, wrong words, repetitions, false starts and fillers (um, uh, like) exactly as spoken.
+- Never correct, complete, paraphrase, summarize or improve anything. Never add words that were not clearly spoken.
+- You have NO conversation context. Do not guess what the speaker probably meant.
+- If a word or part is unclear, write [inaudible] for that part instead of guessing.
+- If the speaker says Korean words, write them in Korean as spoken.
+- If there is no speech (silence or noise only), set hasSpeech to false and transcript to "".
+- pronunciationNoteKo: one short line in Korean about the most noticeable pronunciation or intonation issue, or null if nothing stands out.
+- pronunciationScore: 0-100 for pronunciation and intonation clarity (0 if no speech).
+Respond ONLY with JSON matching the schema.`;
+const TRANSCRIBE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    transcript: { type: 'STRING', description: 'Verbatim words spoken. [inaudible] for unclear parts. "" if no speech.' },
+    hasSpeech: { type: 'BOOLEAN' },
+    pronunciationNoteKo: { type: 'STRING', nullable: true },
+    pronunciationScore: { type: 'INTEGER' }
+  },
+  required: ['transcript', 'hasSpeech', 'pronunciationScore'],
+  propertyOrdering: ['transcript', 'hasSpeech', 'pronunciationNoteKo', 'pronunciationScore']
+};
+
+// 반환: { transcript, pron, pronScore }. 전사 시간·업로드·시도 내역은 턴 계측(m)에 합친다.
+async function transcribeAudio(prep, m) {
+  const tm = { trackUpload: true, attempts: [], trace: [] };
+  S.abort = new AbortController();
+  try {
+    const { data } = await callGemini({
+      role: 'transcribe',
+      contents: [{ role: 'user', parts: [{ text: 'Transcribe this recording verbatim.' }, { inlineData: prep.part }] }],
+      systemInstruction: TRANSCRIBE_SYSTEM,
+      schema: TRANSCRIBE_SCHEMA,
+      thinking: 'minimal',
+      generationConfig: { temperature: 0 },
+      signal: S.abort.signal,
+      meta: tm,
+      fast: true,
+      timeScale: Math.max(1, (prep.duration || 10) / 15) // 긴 녹음은 시간 제한을 늘린다
+    });
+    let transcript = String(data?.transcript || '').replace(/\s+/g, ' ').trim();
+    if (data?.hasSpeech === false || /^(\[inaudible\]\s*)+$/i.test(transcript)) transcript = '';
+    const pronRaw = data?.pronunciationNoteKo == null ? '' : String(data.pronunciationNoteKo).trim();
+    return {
+      transcript,
+      pron: pronRaw && !/^(null|none|없음)$/i.test(pronRaw) ? pronRaw : null,
+      pronScore: clampInt(data?.pronunciationScore, 0, 100, 60)
+    };
+  } finally {
+    m.tUploaded = tm.tUploaded ?? null;
+    m.tTranscribed = performance.now();
+    m.transcribeModel = tm.responder || null;
+    m.transcribeTrace = tm.trace;
+    m.attempts.push(...tm.attempts.map(a => ({ ...a, stage: '전사' })));
+  }
+}
+
+function normalizeTurn(d, localTranscript, inputType, heard = null) {
   const sig = isObj(d?.signals) ? d.signals : {};
   const hud = isObj(d?.hud) ? d.hud : {};
   const transcript = String(localTranscript ?? d?.transcript ?? '').trim();
-  const pronRaw = d?.pronunciationNoteKo == null ? '' : String(d.pronunciationNoteKo).trim();
   return {
     transcript,
     reply: String(d?.reply || '').trim() || 'Got it — tell me a bit more about that?',
@@ -2035,11 +2096,11 @@ function normalizeTurn(d, localTranscript, inputType) {
       upgrade: String(hud.upgrade || '').trim(),
       tipKo: String(hud.tipKo || '').trim()
     },
-    pron: inputType === 'audio' && pronRaw && !/^(null|none|없음)$/i.test(pronRaw) ? pronRaw : null,
+    pron: heard ? heard.pron : null, // 발음 메모는 대화 맥락 없이 녹음만 들은 전사 호출에서 받는다
     signals: {
       fluency: clampInt(sig.fluency, 0, 100, 60), vocab: clampInt(sig.vocab, 0, 100, 60),
       grammar: clampInt(sig.grammar, 0, 100, 60), logic: clampInt(sig.logic, 0, 100, 60),
-      nuance: inputType === 'audio' ? clampInt(sig.nuance, 0, 100, 60) : null
+      nuance: inputType === 'audio' ? clampInt(heard?.pronScore ?? sig.nuance, 0, 100, 60) : null
     },
     angleTag: String(d?.angleTag || '').trim().slice(0, 60),
     inputType,
@@ -2057,17 +2118,21 @@ async function processUserTurn(input) {
   const inputType = input.kind === 'audio' ? 'audio' : input.source;
   const m = newMetric('turn', inputType);
   if (input.t0 != null) m.t0 = input.t0;
-  m.trackUpload = inputType === 'audio';
   S.status = 'processing';
   S.lastFailedInput = null;
   if (inputType === 'keyboard') { S.draftText = ''; const ti = $('#talkInput'); if (ti) ti.value = ''; }
   renderControls();
-  const userIdx = appendUserBubble(inputType === 'audio' ? '🎙️ 전사 중…' : input.text.trim(), inputType, inputType === 'audio');
+  const userIdx = appendUserBubble(inputType === 'audio' ? '🎙️ 듣는 중…' : input.text.trim(), inputType, inputType === 'audio');
+  if (input.kind === 'audio' && input.blob) {
+    input.audioUrl = input.audioUrl || URL.createObjectURL(input.blob);
+    S.log[userIdx].audioUrl = input.audioUrl;
+    refreshUserBubble(userIdx);
+  }
   const line = makeLineStarter(sid, m);
   try {
     if (prevData) await prevData; // 끼어들기 했다면 이전 턴의 기록·HUD가 확정된 뒤 보낸다
     if (!S || S.id !== sid) return;
-    let parts, localTranscript = null;
+    let localTranscript, heard = null, noteKind = input.source;
     if (input.kind === 'audio') {
       const prep = input.prepared || await prepareAudioForGemini(input.blob);
       if (!S || S.id !== sid) return;
@@ -2080,12 +2145,32 @@ async function processUserTurn(input) {
         return;
       }
       input.prepared = prep;
-      parts = [{ text: buildTurnNote('audio', timeUpAtSend) }, { inlineData: prep.part }];
+      // 1) 듣기: 전사 전용 호출 (재시도 때는 이미 받은 전사를 재사용)
+      heard = input.heard || await transcribeAudio(prep, m);
+      if (!S || S.id !== sid) return;
+      input.heard = heard;
+      if (!heard.transcript) {
+        S.log[userIdx].text = '(알아듣지 못함)';
+        S.log[userIdx].pending = false;
+        refreshUserBubble(userIdx);
+        m.error = '말소리를 알아듣지 못함';
+        m.tFull = performance.now();
+        finalizeMetric(m);
+        toast('목소리를 알아듣지 못했어요. 🔁 내 녹음으로 확인하고 다시 말해 주세요', 'warn', 5000);
+        S.status = 'ready'; renderControls(); checkTimeUpWhenIdle();
+        return;
+      }
+      updateUserBubble(userIdx, heard.transcript); // AI가 대답하기 전에 무엇으로 들었는지 먼저 보여 준다
+      if (/\[inaudible\]/i.test(heard.transcript)) toastOnce('inaudible', '일부가 잘 안 들렸어요. 틀리면 말풍선의 ✏️ 고치기를 누르세요', 'info', 60000);
+      localTranscript = heard.transcript;
+      noteKind = 'voiceText';
     } else {
       localTranscript = input.text.trim();
-      parts = [{ text: buildTurnNote(input.source, timeUpAtSend) }, { text: localTranscript }];
     }
+    // 2) 대답: 텍스트만 보낸다 (스트리밍으로 대사 먼저)
+    const parts = [{ text: buildTurnNote(noteKind, timeUpAtSend) }, { text: localTranscript }];
     S.abort = new AbortController();
+    m.tReqStart = null;
     const { data, partial } = await callGemini({
       role: S.chatRole,
       contents: [...historyToContents(S.history), { role: 'user', parts }],
@@ -2098,28 +2183,21 @@ async function processUserTurn(input) {
       stream: { onReply: line.show }
     });
     if (!S || S.id !== sid) return;
-    const turn = normalizeTurn(data, localTranscript, inputType);
+    const turn = normalizeTurn(data, localTranscript, inputType, heard);
     if (line.reply != null) turn.reply = line.reply;
     turn.hudMissing = !!partial;
-    if (!turn.transcript) {
-      removeLogEntry(userIdx);
-      toast('목소리를 알아듣지 못했어요. 다시 말해 주세요 🎙️', 'warn');
-      if (line.reply != null) S.history.push({ role: 'user', text: '(unintelligible audio)' }, { role: 'model', text: line.reply });
-      releaseData();
-      maybeFinalizeMetric(m);
-      if (line.speakP) await line.speakP;
-      if (!S || S.id !== sid) return;
-      if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
-      checkTimeUpWhenIdle();
-      return;
-    }
+    const prevLast = lastTurnLogIdx();
+    turn.userLogIdx = userIdx;
+    turn.historyIdx = S.history.length;
     S.turns.push(turn);
     if (inputType === 'audio') S.usedAudio = true;
-    updateUserBubble(userIdx, turn.transcript);
     S.history.push({ role: 'user', text: turn.transcript }, { role: 'model', text: turn.reply });
     addHudCard(turn, S.turns.length - 1); // HUD·signals는 대사 뒤에 조용히 도착
     releaseData();
     line.show(turn.reply); // 스트리밍이 아니었으면 여기서 표시·재생
+    turn.aiLogIdx = line.logIdx;
+    if (prevLast >= 0) refreshUserBubble(prevLast, false);
+    refreshUserBubble(userIdx, true);
     maybeFinalizeMetric(m);
     await line.speakP;
     if (!S || S.id !== sid) return;
@@ -2139,6 +2217,72 @@ async function processUserTurn(input) {
   } finally {
     releaseData();
   }
+}
+
+// ---- 마지막 턴 고치기 / 다시 말하기 / 내 녹음 듣기 ----
+function canEditTurn(idx) {
+  if (!S) return false;
+  if (S.closing || S.timeUp) { toast('시간이 끝나 고칠 수 없어요', 'warn'); return false; }
+  if (!['ready', 'speaking'].includes(S.status)) { toast('AI 응답이 끝난 뒤 고칠 수 있어요', 'info'); return false; }
+  if (lastTurnLogIdx() !== idx) { toast('마지막 답변만 고칠 수 있어요', 'info'); return false; }
+  return true;
+}
+// 마지막 턴(내 말 + AI 대답 + HUD)을 대화에서 지운다
+function rewindLastTurn() {
+  const turn = S.turns[S.turns.length - 1];
+  if (!turn) return null;
+  skipSpeech();
+  S.turns.pop();
+  S.history.splice(turn.historyIdx);
+  removeLogEntry(turn.userLogIdx);
+  if (turn.aiLogIdx != null && turn.aiLogIdx >= 0) removeLogEntry(turn.aiLogIdx);
+  S.usedAudio = S.turns.some(t => t.inputType === 'audio');
+  renderHudList();
+  refreshEditActions();
+  if (S.status === 'speaking' || S.status === 'processing') S.status = 'ready';
+  renderControls();
+  return turn;
+}
+function editTurn(idx) {
+  if (!canEditTurn(idx)) return;
+  skipSpeech();
+  S.pauses.add('edit');
+  updateTimerUI();
+  const text = S.log[idx]?.text || '';
+  openModal(`
+    <div class="p-5 space-y-3">
+      <h3 class="text-lg font-bold">✏️ 내 답변 고치기</h3>
+      <p class="text-sm text-slate-400">잘못 들은 부분을 실제로 한 말로 고쳐 주세요. 이 턴의 AI 대답과 교정 카드는 지우고, 고친 문장으로 다시 대답을 받아요. (타이머 정지 중)</p>
+      <textarea id="editTranscript" rows="4" class="w-full rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2" autocapitalize="sentences">${esc(text)}</textarea>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-action="closeTopModal" class="tap rounded-xl border border-slate-700">취소</button>
+        <button data-action="submitEdit" data-idx="${idx}" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold">이대로 다시 보내기</button>
+      </div>
+    </div>`, { id: 'edit', onClose: () => { if (S) { S.pauses.delete('edit'); S.timer.last = performance.now(); updateTimerUI(); } } });
+  setTimeout(() => $('#editTranscript')?.focus(), 50);
+}
+function submitEdit(idx) {
+  const text = ($('#editTranscript')?.value || '').trim();
+  if (!text) { toast('고친 문장을 입력해 주세요', 'warn'); return; }
+  closeModal('edit');
+  if (!canEditTurn(idx)) return;
+  rewindLastTurn();
+  processUserTurn({ kind: 'text', text, source: 'edited', t0: performance.now() });
+}
+function redoTurn(idx) {
+  if (!canEditTurn(idx)) return;
+  rewindLastTurn();
+  toast('🎙️ 이번 답변을 지웠어요. 다시 말해 주세요', 'info', 2500);
+  micTap();
+}
+function replayMine(idx) {
+  const url = S?.log[idx]?.audioUrl;
+  if (!url) return;
+  if (S.status === 'listening') { toast('녹음 중에는 들을 수 없어요', 'warn'); return; }
+  if (S.status === 'speaking') skipSpeech();
+  try { audio.mineEl?.pause(); } catch {}
+  audio.mineEl = new Audio(url);
+  audio.mineEl.play().catch(e => toast(`녹음을 재생하지 못했어요: ${e.message}`, 'error'));
 }
 
 async function micTap() {
@@ -2309,6 +2453,10 @@ async function endSessionManual() {
 
 function teardownSessionIO() {
   if (!S) return;
+  try { audio.mineEl?.pause(); } catch {}
+  audio.mineEl = null;
+  S.log.forEach(e => { if (e.audioUrl) URL.revokeObjectURL(e.audioUrl); });
+  closeModal('edit');
   S.abort?.abort();
   S.ttsAbort?.abort();
   cancelRecording();
@@ -2364,7 +2512,7 @@ function finishSession() {
 // tTtsStart~tTtsReady: TTS 생성 · tPlay: 재생 명령 시점 (소리가 꺼져 있어도 동일)
 let metricSeq = 0;
 const METRIC_KIND = { opening: '첫 질문', turn: '턴', closing: '마무리' };
-const METRIC_INPUT = { audio: '🎙️ 녹음', stt: '⚡ 인식', keyboard: '⌨️ 키보드' };
+const METRIC_INPUT = { audio: '🎙️ 녹음', stt: '⚡ 인식', keyboard: '⌨️ 키보드', edited: '✏️ 고침' };
 
 function newMetric(kind, inputType) {
   return { id: ++metricSeq, kind, inputType, t0: performance.now(), attempts: [] };
@@ -2381,10 +2529,12 @@ function finalizeMetric(m) {
   renderDebugUI();
 }
 function metricParts(m) {
-  const base = m.prefetched ? m.t0 : (m.tUploaded ?? m.tReqStart ?? m.t0);
+  // 대사·HUD는 회화 요청 시작 기준 (녹음 턴은 전사가 끝난 뒤 회화 요청이 나간다)
+  const base = m.prefetched ? m.t0 : (m.tReqStart ?? m.t0);
   const d = (a, b) => (a != null && b != null ? Math.max(0, a - b) : null);
   return {
     upload: m.inputType === 'audio' ? d(m.tUploaded, m.t0) : null,
+    transcribe: m.inputType === 'audio' ? d(m.tTranscribed, m.t0) : null,
     gemini: d(m.tReply, base),
     hud: d(m.tFull, base),
     tts: d(m.tTtsReady, m.tTtsStart),
@@ -2398,13 +2548,16 @@ const modelFailures = m => (m.attempts || []).filter(a => a.status !== 'stream')
 const shortModel = id => String(id || '').replace(/^gemini-/, '');
 // 시도 내역: "3.8-flash 503 0.6s → 3.6-flash ok 2.1s"
 function metricTrace(m) {
-  if (!m.trace?.length) return '-';
-  return m.trace.map(t => `${shortModel(t.model)} ${t.status} ${(t.ms / 1000).toFixed(1)}s`).join(' → ');
+  const fmt = list => list.map(t => `${shortModel(t.model)} ${t.status} ${(t.ms / 1000).toFixed(1)}s`).join(' → ');
+  const parts = [];
+  if (m.transcribeTrace?.length) parts.push(`[전사] ${fmt(m.transcribeTrace)}`);
+  if (m.trace?.length) parts.push(`${m.transcribeTrace?.length ? '[대답] ' : ''}${fmt(m.trace)}`);
+  return parts.join(' · ') || '-';
 }
 function metricFallbackText(m) {
   const fails = modelFailures(m);
   if (!fails.length) return m.responder && m.requested && m.responder !== m.requested ? `${m.requested} → ${m.responder} (헤징)` : '-';
-  return `${m.requested} → ${m.responder || '실패'} (${fails.map(a => `${a.model}:${a.status}`).join(', ')})`;
+  return `${m.requested} → ${m.responder || '실패'} (${fails.map(a => `${a.stage ? `${a.stage} ` : ''}${a.model}:${a.status}`).join(', ')})`;
 }
 function metricMethod(m) {
   const hedge = m.hedged ? '+헤징' : '';
@@ -2420,6 +2573,8 @@ function metricRow(m) {
     '종류': METRIC_KIND[m.kind] || m.kind,
     '입력': METRIC_INPUT[m.inputType] || '-',
     '업로드(ms)': msCell(p.upload),
+    '전사(ms)': msCell(p.transcribe),
+    '전사 모델': m.transcribeModel || '-',
     'Gemini 대사(ms)': msCell(p.gemini),
     'HUD 완료(ms)': msCell(p.hud),
     'TTS 생성(ms)': msCell(p.tts),
@@ -2438,7 +2593,7 @@ function debugBadgeText(m) {
   if (!m) return '⏱ 측정 대기 · 탭하면 표';
   const p = metricParts(m);
   const tts = m.ttsMode === 'browser' ? '브라우저' : secText(p.tts);
-  return `응답 ${secText(p.gemini)} · TTS ${tts} · 총 ${secText(p.total)} · ${m.responder || '-'}${modelFailures(m).length ? ' · ⚠폴백' : ''}${m.prefetched ? ' · 미리준비' : ''}${m.error ? ' · ❌' : ''}`;
+  return `${p.transcribe != null ? `전사 ${secText(p.transcribe)} · ` : ''}응답 ${secText(p.gemini)} · TTS ${tts} · 총 ${secText(p.total)} · ${m.responder || '-'}${modelFailures(m).length ? ' · ⚠폴백' : ''}${m.prefetched ? ' · 미리준비' : ''}${m.error ? ' · ❌' : ''}`;
 }
 function renderDebugUI() {
   const wrap = $('#debugWrap');
@@ -2456,18 +2611,18 @@ function renderDebugUI() {
   if (!runtime.debugOpen) return;
   const rows = runtime.metrics.slice(-10).reverse();
   if (!rows.length) { panel.innerHTML = '<div class="text-slate-400 p-1">아직 측정된 턴이 없어요</div>'; return; }
-  const cols = ['#', '종류', '입력', '업로드', '대사', 'HUD', 'TTS', '총', '모델', '방식', '시도 내역'];
+  const cols = ['#', '종류', '입력', '업로드', '전사', '대사', 'HUD', 'TTS', '총', '모델', '방식', '시도 내역'];
   panel.innerHTML = `
     <table class="border-collapse whitespace-nowrap">
       <thead><tr>${cols.map(c => `<th class="text-left text-slate-400 font-normal px-1.5 py-1 border-b border-slate-700">${c}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(m => {
         const p = metricParts(m);
-        const cells = [m.id, METRIC_KIND[m.kind] || m.kind, METRIC_INPUT[m.inputType] || '-', msCell(p.upload), msCell(p.gemini), msCell(p.hud),
+        const cells = [m.id, METRIC_KIND[m.kind] || m.kind, METRIC_INPUT[m.inputType] || '-', msCell(p.upload), msCell(p.transcribe), msCell(p.gemini), msCell(p.hud),
           m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricTrace(m)];
         return `<tr class="${m.error ? 'text-rose-300' : 'text-slate-200'}">${cells.map(c => `<td class="px-1.5 py-1 border-b border-slate-800">${esc(c)}</td>`).join('')}</tr>`;
       }).join('')}</tbody>
     </table>
-    <div class="text-slate-500 px-1.5 pt-1">단위 ms · 총 = 입력 끝 → 재생 명령 · 실패 메시지 등 전체 기록은 console.table</div>
+    <div class="text-slate-500 px-1.5 pt-1">단위 ms · 전사·총 = 입력 끝 기준 · 대사·HUD = 회화 요청 시작 기준 · 실패 메시지 등 전체 기록은 console.table</div>
     ${downModelsText() ? `<div class="text-amber-300/90 px-1.5 pt-1">⏭ 잠시 뒤로 미룬 모델: ${esc(downModelsText())}</div>` : ''}`;
 }
 function toggleDebugPanel() {
@@ -3546,7 +3701,7 @@ const personaName = stage => STAGES[stage].persona.split(',')[0];
 function aiBubbleHtml(text, idx, animate) {
   const hidden = !state.settings.showSubtitles;
   return `
-  <div class="flex gap-2 items-start ${animate ? 'fade-in' : ''}">
+  <div class="flex gap-2 items-start ${animate ? 'fade-in' : ''}" data-log="${idx}">
     <div class="shrink-0 w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">${STAGES[S.stage].icon}</div>
     <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-800/80 border border-slate-700 px-3.5 py-2.5">
       <p data-action="revealSub" class="ai-sub leading-relaxed break-words ${hidden ? 'blurred-sub' : ''}">${esc(text)}</p>
@@ -3558,51 +3713,79 @@ function aiBubbleHtml(text, idx, animate) {
     </div>
   </div>`;
 }
-function userBubbleHtml(text, inputType, animate, idx, pending = false) {
-  const icon = inputType === 'audio' ? '🎙️' : inputType === 'stt' ? '⚡' : '⌨️';
+const USER_ICON = { audio: '🎙️', stt: '⚡', keyboard: '⌨️', edited: '✏️' };
+// 사용자 말풍선. 녹음이면 [내 녹음 듣기], 마지막 턴이면 [고치기]·[다시 말하기]
+function userBubbleHtml(entry, idx, animate, showEdit = false) {
+  const { text, inputType, pending } = entry;
+  const unclear = /\[inaudible\]/i.test(text || '');
+  const btn = 'min-h-[32px] px-2 rounded-lg border border-emerald-500/30 text-[11px] text-emerald-200/90 hover:bg-emerald-500/10';
+  const actions = [
+    entry.audioUrl ? `<button data-action="replayMine" data-idx="${idx}" class="${btn}">🔁 내 녹음</button>` : '',
+    showEdit ? `<button data-action="editTurn" data-idx="${idx}" class="${btn}">✏️ 고치기</button>` : '',
+    showEdit && inputType !== 'keyboard' && inputType !== 'edited' ? `<button data-action="redoTurn" data-idx="${idx}" class="${btn}">🎙️ 다시 말하기</button>` : ''
+  ].filter(Boolean).join('');
   return `
   <div class="flex justify-end ${animate ? 'fade-in' : ''}" data-log="${idx}">
-    <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-2.5">
+    <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-emerald-500/15 border ${unclear ? 'border-amber-400/50' : 'border-emerald-500/30'} px-3.5 py-2.5">
       <p class="user-text leading-relaxed break-words ${pending ? 'text-emerald-200/60 italic' : 'text-emerald-50'}">${esc(text)}</p>
-      <div class="text-[11px] text-emerald-300/60 text-right mt-1">${icon} 나</div>
+      ${unclear && !pending ? '<div class="text-[11px] text-amber-300/90 mt-1">일부가 잘 안 들렸어요 · 틀리면 ✏️로 고치세요</div>' : ''}
+      <div class="flex flex-wrap items-center justify-end gap-1.5 mt-1.5">
+        ${actions}
+        <span class="text-[11px] text-emerald-300/60">${USER_ICON[inputType] || '⌨️'} 나</span>
+      </div>
     </div>
   </div>`;
 }
+const lastTurnLogIdx = () => (S?.turns.length ? S.turns[S.turns.length - 1].userLogIdx : -1);
 function renderChatLog() {
   const box = $('#chatLog');
   if (!box || !S) return;
-  box.innerHTML = S.log.length
-    ? S.log.map((m, i) => (m.removed ? '' : m.role === 'ai' ? aiBubbleHtml(m.text, i, false) : userBubbleHtml(m.text, m.inputType, false, i, m.pending))).join('')
-    : '';
+  const editIdx = lastTurnLogIdx();
+  box.innerHTML = S.log.map((m, i) => (m.removed ? '' : m.role === 'ai' ? aiBubbleHtml(m.text, i, false) : userBubbleHtml(m, i, false, i === editIdx))).join('');
   box.scrollTop = box.scrollHeight;
 }
+// 반환: log 인덱스
 function appendAiBubble(text) {
-  if (!S) return;
+  if (!S) return -1;
   S.log.push({ role: 'ai', text });
+  const idx = S.log.length - 1;
   const box = $('#chatLog');
-  if (!box) return;
-  box.insertAdjacentHTML('beforeend', aiBubbleHtml(text, S.log.length - 1, true));
-  box.scrollTop = box.scrollHeight;
+  if (box) {
+    box.insertAdjacentHTML('beforeend', aiBubbleHtml(text, idx, true));
+    box.scrollTop = box.scrollHeight;
+  }
+  return idx;
 }
-// 사용자 말풍선은 전송 즉시 띄운다 (녹음은 "전사 중…" 자리표시 → 전사 도착 시 갱신). 반환: log 인덱스
+// 사용자 말풍선은 전송 즉시 띄운다 (녹음은 "듣는 중…" 자리표시 → 전사 도착 시 갱신). 반환: log 인덱스
 function appendUserBubble(text, inputType, pending = false) {
   if (!S) return -1;
   S.log.push({ role: 'user', text, inputType, pending });
   const idx = S.log.length - 1;
   const box = $('#chatLog');
   if (box) {
-    box.insertAdjacentHTML('beforeend', userBubbleHtml(text, inputType, true, idx, pending));
+    box.insertAdjacentHTML('beforeend', userBubbleHtml(S.log[idx], idx, true));
     box.scrollTop = box.scrollHeight;
   }
   return idx;
+}
+function refreshUserBubble(idx, showEdit = false) {
+  const entry = S?.log[idx];
+  const el = $(`#chatLog [data-log="${idx}"]`);
+  if (!entry || entry.removed || !el) return;
+  el.outerHTML = userBubbleHtml(entry, idx, false, showEdit);
 }
 function updateUserBubble(idx, text) {
   const entry = S?.log[idx];
   if (!entry) return;
   entry.text = text;
   entry.pending = false;
-  const p = $(`#chatLog [data-log="${idx}"] .user-text`);
-  if (p) { p.textContent = text; p.className = 'user-text leading-relaxed break-words text-emerald-50'; }
+  refreshUserBubble(idx, false);
+}
+// 마지막 턴의 말풍선에만 [고치기]·[다시 말하기]를 보여 준다
+function refreshEditActions() {
+  if (!S) return;
+  const editIdx = lastTurnLogIdx();
+  S.log.forEach((m, i) => { if (m.role === 'user' && !m.removed) refreshUserBubble(i, i === editIdx); });
 }
 function removeLogEntry(idx) {
   const entry = S?.log[idx];
@@ -3977,6 +4160,7 @@ function settingsHtml() {
       ${roleRow('analysis', '🧠 분석 모델', '리포트·토픽 생성·보스 평가 · thinking 높게')}
       ${roleRow('tts', '🔊 TTS 속도 모델', '속도 우선 · 저지연 (기본)')}
       ${roleRow('ttsQuality', '🔊 TTS 품질 모델', '품질 우선 선택 시 사용')}
+      ${roleRow('transcribe', '🎧 전사 모델', '녹음 받아쓰기 전용 · 대화 맥락 없이 듣기만')}
       <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
         <div class="text-sm font-semibold">🛟 폴백 체인 <span class="text-[11px] text-slate-500 font-normal">429·5xx·404·미지원 시 순서대로 재시도 (쉼표/줄바꿈 구분)</span></div>
         <textarea data-change="fallbackChain" rows="3" class="mt-2 w-full rounded-lg bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2 font-mono text-sm" autocapitalize="off" spellcheck="false">${esc(m.fallbackChain.join('\n'))}</textarea>
@@ -4222,6 +4406,10 @@ const ACTIONS = {
   toggleSubtitles: () => { state.settings.showSubtitles = !state.settings.showSubtitles; saveState(); applySubtitles(); },
   toggleHud: () => toggleHud(),
   toggleDebugPanel: () => toggleDebugPanel(),
+  replayMine: el => replayMine(Number(el.dataset.idx)),
+  editTurn: el => editTurn(Number(el.dataset.idx)),
+  submitEdit: el => submitEdit(Number(el.dataset.idx)),
+  redoTurn: el => redoTurn(Number(el.dataset.idx)),
   setTtsPref: el => setTtsPref(el.dataset.pref),
   endSession: () => endSessionManual(),
   resumeBg: () => resumeFromBackground(),
