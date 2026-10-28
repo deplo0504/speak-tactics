@@ -124,13 +124,19 @@ const MAX_SESSIONS = 50;
 const SAVE_PREFIX = 'RPGSAVE1:';
 
 const DEFAULT_MODELS = {
-  chat: 'gemini-3.8-flash',
-  analysis: 'gemini-3.8-flash',
+  chat: 'gemini-3.6-flash',
+  analysis: 'gemini-3.8-flash',          // 리포트·토픽 생성·보스 평가
   tts: 'gemini-3.8-flash-lite-tts',      // 속도 우선(저지연) TTS
   ttsQuality: 'gemini-3.8-flash-tts',    // 품질 우선 TTS
   transcribe: 'gemini-3.5-flash-lite',   // 녹음 받아쓰기 전용 (대화 맥락 없이 듣기만)
-  fallbackChain: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
+  // 실제 체인 = [역할의 기본 모델, ...이 목록] 중복 제거 → 회화 3.6→3.8→lite, 분석 3.8→3.6→lite
+  fallbackChain: ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']
 };
+// 예전 기본값 그대로인 저장 체인은 새 기본 체인으로 옮긴다 (직접 고친 체인은 유지)
+const LEGACY_FALLBACK_CHAINS = [
+  ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'],
+  ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
+];
 const LEGACY_TTS_DEFAULT = 'gemini-3.8-flash-tts';
 // TTS 전용 폴백 (일반 폴백 체인은 텍스트 모델이라 TTS에 쓰지 않음)
 const TTS_FALLBACKS = ['gemini-2.5-flash-preview-tts'];
@@ -311,7 +317,8 @@ function migrateState(raw) {
   for (const r of ['chat', 'analysis', 'tts', 'ttsQuality', 'transcribe']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
   if (!TTS_PREFS[st.ttsPreference]) st.ttsPreference = 'speed';
   st.models.fallbackChain = (Array.isArray(st.models.fallbackChain) ? st.models.fallbackChain : []).map(normalizeModelId).filter(Boolean);
-  if (!st.models.fallbackChain.length) st.models.fallbackChain = [...DEFAULT_MODELS.fallbackChain];
+  const chainKey = st.models.fallbackChain.join('|');
+  if (!st.models.fallbackChain.length || LEGACY_FALLBACK_CHAINS.some(c => c.join('|') === chainKey)) st.models.fallbackChain = [...DEFAULT_MODELS.fallbackChain];
   st.stage = clampInt(st.stage, 1, 4, 1);
   st.timerPreset = TIMER_PRESETS.includes(Number(st.timerPreset)) ? Number(st.timerPreset) : 5;
   if (!INPUT_MODES[st.inputMode]) st.inputMode = 'record';
@@ -744,24 +751,31 @@ function chainForRole(role, override) {
   return uniq([first, ...m.fallbackChain.map(normalizeModelId)].filter(Boolean));
 }
 
-// 회화는 모델이 지원하는 가장 낮은 thinking('minimal'), 분석은 높게('high'). 모델 세대별로 설정 형식이 다르다.
+// 회화는 모델이 지원하는 가장 낮은 thinking, 분석은 'high'. 모델 세대별로 설정 형식이 다르다 (ai.google.dev/gemini-api/docs/thinking):
+// - 2.5: thinkingBudget (0 = 끔, -1 = 동적). 2.5 Pro는 끌 수 없어 최소 128.
+// - 3.x 이상: thinkingLevel만. thinkingBudget과 같이 보내면 400이고, 3.x에 thinkingBudget:0도 400.
+//   'minimal'은 3.6 Flash·Flash-Lite 계열만 지원. 3.7·3.8 Flash, Pro, Argon은 'low'가 최저 (minimal → 400 "Thinking level MINIMAL is not supported").
+function supportsMinimalThinking(model) {
+  if (/pro|argon/i.test(model)) return false;
+  if (/lite/i.test(model)) return true;
+  const v = /gemini-(\d+)\.(\d+)-flash/i.exec(model);
+  return !v || Number(v[1]) < 3 || (Number(v[1]) === 3 && Number(v[2]) <= 6);
+}
 function thinkingConfigFor(model, level) {
   if (!level || /tts/i.test(model)) return null;
-  // 이 모델이 전에 거부한 thinking 값은 건너뛴다 (400 헛걸음 방지)
+  // 이 모델이 전에 거부한 thinking 값은 보내지 않는다 (400은 하루 요청 한도도 깎는다)
   const floor = modelCaps[model]?.thinkingFloor;
   if (level !== 'high' && floor === 'none') return null;
   if (level === 'minimal' && floor === 'low') level = 'low';
   if (/gemini-(1\.|2\.0)/i.test(model)) return null;
   if (/gemini-2\.5/i.test(model)) {
     if (level === 'high') return { thinkingBudget: -1 };
-    return { thinkingBudget: /pro/i.test(model) ? 128 : 0 }; // 2.5 Pro는 thinking을 끌 수 없어 최소 128
+    return { thinkingBudget: /pro/i.test(model) ? 128 : 0 };
   }
   if (level === 'high') return { thinkingLevel: 'high' };
-  if (level === 'minimal' && !/pro/i.test(model)) return { thinkingLevel: 'minimal' }; // Pro 계열은 low가 최저
+  if (level === 'minimal' && supportsMinimalThinking(model)) return { thinkingLevel: 'minimal' };
   return { thinkingLevel: 'low' };
 }
-// 모델이 해당 thinking 값을 거부하면 한 단계씩 내려서 재시도: minimal → low → 미지정
-const lowerThinking = level => (level === 'minimal' ? 'low' : null);
 
 function parseRetryDelay(json) {
   const details = json?.error?.details;
@@ -850,7 +864,7 @@ async function requestModel(model, body, signal, { stream = false, onUploaded = 
   if (res.status !== 200) {
     const json = parseErrorBody(res.text);
     const msg = json?.error?.message || res.statusText || `HTTP ${res.status}`;
-    const unsupported = /not (found|supported)|unsupported|does not support|is not available|no longer available/i.test(msg);
+    const badKey = res.status === 400 && /api key not valid|API_KEY_INVALID/i.test(msg);
     const retryDelay = res.status === 429 ? parseRetryDelay(json) : null;
     const daily = res.status === 429 && isDailyQuotaError(json, retryDelay);
     if (res.status === 429) { countRequest(model, -1); if (daily) markDailyExhausted(model); }
@@ -858,7 +872,8 @@ async function requestModel(model, body, signal, { stream = false, onUploaded = 
       status: res.status,
       model,
       daily,
-      retryable: [404, 429, 500, 502, 503, 504].includes(res.status) || (res.status === 400 && unsupported),
+      // 400은 같은 모델로 다시 보내도 똑같이 실패하니 다음 모델로 (키 오류만 즉시 중단)
+      retryable: [404, 429, 500, 502, 503, 504].includes(res.status) || (res.status === 400 && !badKey),
       retryDelay,
       thinkingIssue: res.status === 400 && /thinking/i.test(msg)
     });
@@ -995,9 +1010,11 @@ function usageRoles() {
 const usageColor = pct => (pct == null ? 'bg-slate-600' : pct >= 85 ? 'bg-rose-400' : pct >= 60 ? 'bg-amber-400' : 'bg-emerald-400');
 
 // ---- 모델 상태 기억 ----
-// 회화 호출 시간 제한: 4초 안에 대사가 없으면 다음 모델에도 동시 요청(헤징), 10초 안에 대사가 없으면 그 모델은 포기.
-// 대사 도착 후 HUD까지 20초. 스트리밍이 아닌 회화 호출(SOS·첫 질문 미리 준비)은 응답 전체 기준 12초.
-const FAST = { hedgeMs: 4000, firstReplyMs: 10000, fullMs: 12000, afterReplyMs: 20000 };
+// 회화 호출 시간 제한: 첫 토큰이 10초 안에 안 오면 그 모델은 포기. 4초 안에 첫 토큰이 없으면 다음 모델에도 동시 요청(헤징).
+// 첫 토큰 후 대사 완성까지 10초, 대사 도착 후 HUD까지 20초. 스트리밍이 아닌 회화 호출(SOS·첫 질문 미리 준비)은 응답 전체가 첫 토큰.
+const FAST = { hedgeMs: 4000, firstTokenMs: 10000, replyAfterTokenMs: 10000, afterReplyMs: 20000 };
+const RETRY_503_DELAY_MS = 1000; // 503은 1초 뒤 같은 모델로 1회만 재시도, 그다음 폴백
+const SESSION_SKIP_AFTER = 2;    // 한 대화에서 연속 2번 실패한 모델은 대화가 끝날 때까지 건너뜀
 const MODEL_DOWN_MS = 3 * 60000;     // 503·429·5xx·시간초과·네트워크 오류 → 3분간 뒤로 미룸
 const MODEL_MISSING_MS = 30 * 60000; // 404·미지원 → 30분간 뒤로 미룸
 const LS_MODEL_CAPS = 'rpg_model_caps';
@@ -1012,6 +1029,7 @@ function setThinkingFloor(model, floor) {
   try { localStorage.setItem(LS_MODEL_CAPS, JSON.stringify(modelCaps)); } catch {}
 }
 function markModelDown(model, e) {
+  if (e?.thinkingIssue) return; // thinking 값만 거부된 것 → 바뀐 값으로 다음 요청은 정상
   let ms = MODEL_DOWN_MS;
   if (e?.status === 404 || e?.status === 400) ms = MODEL_MISSING_MS;
   if (e?.status === 429 && e.retryDelay) ms = Math.max(ms, e.retryDelay * 1000);
@@ -1022,6 +1040,21 @@ const markModelUp = model => modelHealth.delete(model);
 const isModelDown = model => (modelHealth.get(model)?.downUntil || 0) > Date.now();
 // 최근 실패한 모델은 체인 뒤로 보낸다 (마지막 수단으로는 여전히 시도)
 const orderByHealth = chain => [...chain.filter(m => !isModelDown(m)), ...chain.filter(isModelDown)];
+// 대화 중(S가 있을 때)만 모델별 연속 실패를 센다. 성공하면 0으로. 대화가 끝나면 S와 함께 사라진다
+function noteSessionResult(model, ok) {
+  if (!S) return;
+  const f = S.modelFails || (S.modelFails = {});
+  if (ok) { delete f[model]; return; }
+  f[model] = (f[model] || 0) + 1;
+  if (f[model] === SESSION_SKIP_AFTER) toastOnce(`skip:${S.id}:${model}`, `⏭ ${model} 연속 ${SESSION_SKIP_AFTER}번 실패 → 이번 대화에서는 건너뛸게요`, 'warn', 6000);
+}
+const isSessionSkipped = model => (S?.modelFails?.[model] || 0) >= SESSION_SKIP_AFTER;
+const sessionSkippedText = () => Object.keys(S?.modelFails || {}).filter(isSessionSkipped).join(', ');
+// 건너뛸 모델을 빼고 건강한 순서로. 전부 빠지면 마지막 수단으로 원래 체인
+function usableChain(chain) {
+  const left = chain.filter(m => !isSessionSkipped(m));
+  return orderByHealth(left.length ? left : chain);
+}
 function downModelsText() {
   return [...modelHealth.entries()]
     .filter(([, h]) => h.downUntil > Date.now())
@@ -1055,13 +1088,14 @@ function finishMeta(meta, res, role, firstModel) {
 }
 
 /**
- * 모델 1개에 대한 시도. 같은 모델 안에서만 재시도한다:
- * thinking 값을 거부하면 한 단계 낮춰(기억), 스트림이 실패하면 일반 요청으로, JSON 파싱 실패는 1회.
- * 스트리밍 중 "reply"가 완성되면 onReply. reply를 보낸 뒤 끊기면 { partial: true }.
+ * 모델 1개에 대한 시도. 같은 모델 안에서의 재시도는 이것뿐이다:
+ * 503은 1초 뒤 1회, 스트림이 실패하면 일반 요청으로, JSON 파싱 실패는 1회.
+ * 400은 재시도 없이 바로 던진다 (thinking 값 거부였으면 낮춘 값을 기억해 다음 요청부터 적용).
+ * 스트리밍 중 첫 텍스트가 오면 onFirstToken, "reply"가 완성되면 onReply. reply를 보낸 뒤 끊기면 { partial: true }.
  */
-async function attemptModel(model, { contents, systemInstruction, schema, thinking, generationConfig = {}, raw, signal, wantStream, onReply, onUploaded, meta }) {
+async function attemptModel(model, { contents, systemInstruction, schema, thinking, generationConfig = {}, raw, signal, wantStream, onReply, onFirstToken, onUploaded, meta }) {
   const startedAt = performance.now();
-  let level = thinking, parseRetried = false, useStream = wantStream, emitted = null;
+  let level = thinking, parseRetried = false, retried503 = false, useStream = wantStream, emitted = null, gotToken = false;
   for (let step = 0; step < 6; step++) {
     const body = { contents, generationConfig: { ...generationConfig } };
     if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
@@ -1074,6 +1108,7 @@ async function attemptModel(model, { contents, systemInstruction, schema, thinki
           stream: true,
           onUploaded,
           onText: acc => {
+            if (!gotToken) { gotToken = true; onFirstToken && onFirstToken(); }
             if (emitted != null) return;
             const r = extractJsonStringField(acc, 'reply');
             if (r == null) return;
@@ -1104,14 +1139,17 @@ async function attemptModel(model, { contents, systemInstruction, schema, thinki
       catch { throw new GeminiError('JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
     } catch (e) {
       if (isAbort(e)) throw e;
-      if (e.thinkingIssue && level) {
-        logAttempt(meta, model, e.status, startedAt, `thinking '${level}' 거부 → 한 단계 낮춤: ${e.message}`);
+      if (e.thinkingIssue && level && level !== 'high') {
         if (level === 'minimal') setThinkingFloor(model, 'low');
         else if (level === 'low') setThinkingFloor(model, 'none');
-        level = lowerThinking(level);
-        continue;
       }
       if (useStream && emitted != null) return { data: { reply: emitted }, model, streamed: true, partial: true };
+      if (e.status === 503 && !retried503) {
+        retried503 = true;
+        logAttempt(meta, model, 503, startedAt, `1초 뒤 재시도: ${e.message}`);
+        await sleep(RETRY_503_DELAY_MS, signal);
+        continue;
+      }
       if (useStream && (e.streamBroken || e.status === 0)) {
         logAttempt(meta, model, 'stream', startedAt, `스트림 실패 → 일반 요청: ${e.message}`);
         if (meta) meta.streamFallback = shortReason(e);
@@ -1128,9 +1166,9 @@ async function attemptModel(model, { contents, systemInstruction, schema, thinki
 /**
  * 공통 호출 함수.
  * - schema가 있으면 JSON 모드 + responseSchema, 파싱 실패 시 같은 모델로 1회 재요청
- * - 429·500·503·404·모델 미지원·시간초과면 폴백 체인의 다음 모델로 (대기 없이 바로).
- *   체인을 다 돌아도 실패하면 지수 백오프(1초→2초) 후 한 바퀴 더.
- * - 최근 실패한 모델은 몇 분간 체인 뒤로 보낸다.
+ * - 400·404·429·5xx·시간초과면 폴백 체인의 다음 모델로 (대기 없이 바로. 503만 같은 모델로 1초 뒤 1회).
+ *   체인을 다 돌아도 실패하면 1초 뒤 한 바퀴 더 (400 난 모델은 빼고). 회화(fast)는 한 바퀴만.
+ * - 최근 실패한 모델은 몇 분간 체인 뒤로 보내고, 대화 중 연속 2번 실패한 모델은 그 대화 동안 건너뛴다.
  * - fast: true (회화용) → 시간 제한 + 헤징. stream: { onReply } 면 streamGenerateContent로 대사를 먼저 받는다.
  * - meta: 계측 객체 (requested / responder / attempts / trace / tReqStart / tUploaded / tReply / tFull ...)
  */
@@ -1140,15 +1178,17 @@ async function callGemini(opts = {}) {
   const baseChain = chainForRole(role, opts.modelOverride);
   prepMeta(meta, baseChain);
   let lastErr = null;
+  const rejected = new Set(); // 400 난 모델: 다시 보내도 같은 400
   for (let round = 0; round < rounds; round++) {
     if (round > 0) await sleep(1000 * 2 ** (round - 1), signal);
-    for (const model of orderByHealth(baseChain)) {
+    for (const model of usableChain(baseChain).filter(m => !rejected.has(m))) {
       const t = performance.now();
       if (meta && meta.tReqStart == null) meta.tReqStart = t;
       const onUploaded = meta?.trackUpload ? at => { if (meta.tUploaded == null) meta.tUploaded = at; } : null;
       try {
         const res = await attemptModel(model, { ...opts, wantStream: false, onUploaded, meta });
         markModelUp(model);
+        noteSessionResult(model, true);
         logAttempt(meta, model, 'ok', t);
         finishMeta(meta, res, role, baseChain[0]);
         return res;
@@ -1157,7 +1197,9 @@ async function callGemini(opts = {}) {
         lastErr = e;
         logAttempt(meta, model, shortReason(e), t, e.message);
         if (!e.retryable) throw friendlyError(e);
+        if (e.status === 400) rejected.add(model);
         markModelDown(model, e);
+        noteSessionResult(model, false);
         if (!quiet && e.status === 429) toastOnce(`429:${model}`, `⏳ ${model} 요청 한도 초과${e.retryDelay ? ` — ${Math.ceil(e.retryDelay)}초 후 재사용 가능` : ''}. 다른 모델로 전환할게요`, 'warn', 30000);
       }
     }
@@ -1173,7 +1215,8 @@ function callGeminiFast(opts) {
   const baseChain = chainForRole(role, opts.modelOverride);
   prepMeta(meta, baseChain);
   return new Promise((resolve, reject) => {
-    let settled = false, winner = null, lastErr = null, round = 0, queue = orderByHealth(baseChain), qi = 0;
+    let settled = false, winner = null, lastErr = null, qi = 0;
+    const queue = usableChain(baseChain);
     const live = new Set();
     const onOuterAbort = () => {
       for (const a of live) { a.cancelled = true; a.ac.abort(); }
@@ -1190,7 +1233,7 @@ function callGeminiFast(opts) {
         o.cancelled = true;
         clearTimeout(o.hedgeT);
         clearTimeout(o.deadT);
-        const slowOne = o.reply == null && performance.now() - o.t >= o.hedgeMs;
+        const slowOne = o.reply == null && !o.gotToken && performance.now() - o.t >= o.hedgeMs;
         if (slowOne) markModelDown(o.model, { status: 'slow' });
         logAttempt(meta, o.model, 'cancel', o.t, slowOne ? '대사가 늦어 다른 모델 응답 사용 → 취소 (잠시 뒤로 미룸)' : '다른 모델이 먼저 응답 → 취소');
         o.ac.abort();
@@ -1222,13 +1265,7 @@ function callGeminiFast(opts) {
       if (settled || winner) return;
       if (live.size < 2) launchNext();
       if (live.size > 0) return;
-      if (round < 1) { // 체인을 다 돌아도 실패 → 1초 백오프 후 한 바퀴 더
-        round++;
-        queue = orderByHealth(baseChain);
-        qi = 0;
-        sleep(1000, signal).then(() => { if (!settled) launchNext(); }, () => {});
-        return;
-      }
+      // 체인을 한 바퀴 다 돌면 끝 (같은 모델을 다시 돌면 한 턴이 수십 초로 늘어난다)
       settle(reject, friendlyError(lastErr));
     };
     const run = model => {
@@ -1236,7 +1273,7 @@ function callGeminiFast(opts) {
       live.add(a);
       if (meta && meta.tReqStart == null) meta.tReqStart = a.t;
       const hedgeMs = (wantStream ? FAST.hedgeMs : FAST.hedgeMs + 1000) * slow;
-      const deadMs = (wantStream ? FAST.firstReplyMs : FAST.fullMs) * slow;
+      const deadMs = FAST.firstTokenMs * slow;
       a.hedgeMs = hedgeMs;
       a.hedgeT = setTimeout(() => { if (!settled && !winner && launchNext() && meta) meta.hedged = true; }, hedgeMs);
       armDeadline(a, deadMs);
@@ -1248,11 +1285,18 @@ function callGeminiFast(opts) {
         onUploaded: at => {
           // 오디오 업로드가 끝난 시점부터 시간 제한을 다시 잰다 (느린 회선에서 업로드 때문에 포기하지 않도록)
           if (meta?.trackUpload && meta.tUploaded == null) meta.tUploaded = at;
-          if (meta?.trackUpload && a.reply == null) {
+          if (meta?.trackUpload && a.reply == null && !a.gotToken) {
             armDeadline(a, deadMs);
             clearTimeout(a.hedgeT);
             a.hedgeT = setTimeout(() => { if (!settled && !winner && launchNext() && meta) meta.hedged = true; }, hedgeMs);
           }
+        },
+        onFirstToken: () => {
+          // 살아 있는 모델 → 헤징하지 않고, 대사 완성까지 시간을 새로 준다
+          if (settled || winner || a.reply != null) return;
+          a.gotToken = true;
+          clearTimeout(a.hedgeT);
+          armDeadline(a, FAST.replyAfterTokenMs * slow);
         },
         onReply: r => {
           if (settled || (winner && winner !== a)) return;
@@ -1271,6 +1315,7 @@ function callGeminiFast(opts) {
         if (settled || (winner && winner !== a)) return;
         winner = a;
         markModelUp(model);
+        noteSessionResult(model, true);
         logAttempt(meta, model, 'ok', a.t);
         finishMeta(meta, res, role, baseChain[0]);
         settle(resolve, res);
@@ -1289,12 +1334,13 @@ function callGeminiFast(opts) {
         if (a.cancelled) return;
         if (isAbort(e) && !a.timedOut) return;
         const err = a.timedOut
-          ? new GeminiError(`${wantStream ? '대사' : '응답'} ${deadMs / 1000}초 초과`, { status: 'timeout', retryable: true, model })
+          ? new GeminiError(a.gotToken ? `첫 토큰 후 대사 ${FAST.replyAfterTokenMs * slow / 1000}초 초과` : `첫 토큰 ${deadMs / 1000}초 초과`, { status: 'timeout', retryable: true, model })
           : e;
         lastErr = err;
         logAttempt(meta, model, shortReason(err), a.t, err.message);
         if (!err.retryable) { settle(reject, friendlyError(err)); return; }
         markModelDown(model, err);
+        noteSessionResult(model, false);
         if (!quiet && err.status === 429) toastOnce(`429:${model}`, `⏳ ${model} 요청 한도 초과${err.retryDelay ? ` — ${Math.ceil(err.retryDelay)}초 후 재사용 가능` : ''}. 다른 모델로 전환할게요`, 'warn', 30000);
         afterFailure();
       });
@@ -2765,11 +2811,19 @@ function metricRow(m) {
     '오류': m.error || '-'
   };
 }
+// 실패 사유 요약: "3.8-flash 400 Thinking level MINIMAL is not supp…" (error.message 앞부분)
+function failureReasonText(m, max = 48) {
+  const f = modelFailures(m)[0];
+  if (!f) return '';
+  const reason = f.reason.length > max ? `${f.reason.slice(0, max)}…` : f.reason;
+  return `${shortModel(f.model)} ${f.status}${reason ? ` ${reason}` : ''}`;
+}
 function debugBadgeText(m) {
   if (!m) return '⏱ 측정 대기 · 탭하면 표';
   const p = metricParts(m);
   const tts = m.ttsMode === 'browser' ? '브라우저' : secText(p.tts);
-  return `${p.transcribe != null ? `전사 ${secText(p.transcribe)} · ` : ''}응답 ${secText(p.gemini)} · TTS ${tts} · 총 ${secText(p.total)} · ${m.responder || '-'}${modelFailures(m).length ? ' · ⚠폴백' : ''}${m.prefetched ? ' · 미리준비' : ''}${m.error ? ' · ❌' : ''}`;
+  const fail = failureReasonText(m);
+  return `${p.transcribe != null ? `전사 ${secText(p.transcribe)} · ` : ''}응답 ${secText(p.gemini)} · TTS ${tts} · 총 ${secText(p.total)} · ${m.responder || '-'}${fail ? ` · ⚠ ${fail}` : ''}${m.prefetched ? ' · 미리준비' : ''}${m.error ? ' · ❌' : ''}`;
 }
 function renderDebugUI() {
   const wrap = $('#debugWrap');
@@ -2787,19 +2841,21 @@ function renderDebugUI() {
   if (!runtime.debugOpen) return;
   const rows = runtime.metrics.slice(-10).reverse();
   if (!rows.length) { panel.innerHTML = '<div class="text-slate-400 p-1">아직 측정된 턴이 없어요</div>'; return; }
-  const cols = ['#', '종류', '입력', '업로드', '전사', '대사', 'HUD', 'TTS', '총', '모델', '방식', '시도 내역'];
+  const cols = ['#', '종류', '입력', '업로드', '전사', '대사', 'HUD', 'TTS', '총', '모델', '방식', '시도 내역', '실패 사유'];
   panel.innerHTML = `
     <table class="border-collapse whitespace-nowrap">
       <thead><tr>${cols.map(c => `<th class="text-left text-slate-400 font-normal px-1.5 py-1 border-b border-slate-700">${c}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(m => {
         const p = metricParts(m);
         const cells = [m.id, METRIC_KIND[m.kind] || m.kind, METRIC_INPUT[m.inputType] || '-', msCell(p.upload), msCell(p.transcribe), msCell(p.gemini), msCell(p.hud),
-          m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricTrace(m)];
+          m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricTrace(m),
+          modelFailures(m).map(a => `${shortModel(a.model)} ${a.status}: ${a.reason.slice(0, 80)}`).join(' | ') || '-'];
         return `<tr class="${m.error ? 'text-rose-300' : 'text-slate-200'}">${cells.map(c => `<td class="px-1.5 py-1 border-b border-slate-800">${esc(c)}</td>`).join('')}</tr>`;
       }).join('')}</tbody>
     </table>
     <div class="text-slate-500 px-1.5 pt-1">단위 ms · 전사·총 = 입력 끝 기준 · 대사·HUD = 회화 요청 시작 기준 · 실패 메시지 등 전체 기록은 console.table</div>
-    ${downModelsText() ? `<div class="text-amber-300/90 px-1.5 pt-1">⏭ 잠시 뒤로 미룬 모델: ${esc(downModelsText())}</div>` : ''}`;
+    ${downModelsText() ? `<div class="text-amber-300/90 px-1.5 pt-1">⏭ 잠시 뒤로 미룬 모델: ${esc(downModelsText())}</div>` : ''}
+    ${sessionSkippedText() ? `<div class="text-rose-300/90 px-1.5 pt-1">🚫 이번 대화에서 건너뛰는 모델 (연속 ${SESSION_SKIP_AFTER}번 실패): ${esc(sessionSkippedText())}</div>` : ''}`;
 }
 function toggleDebugPanel() {
   runtime.debugOpen = !runtime.debugOpen;
