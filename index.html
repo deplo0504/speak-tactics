@@ -4240,6 +4240,15 @@ function setModel(role, id) {
   state.settings.models[role] = id;
   saveState();
   renderHeader();
+  // 직접 입력한 모델이 목록에 없어도 드롭다운이 실제 저장값을 보여 주도록 맞춘다
+  const sel = $(`select[data-change="modelSelect"][data-role="${role}"]`);
+  if (sel) {
+    if (![...sel.options].some(o => o.value === id)) sel.add(new Option(`${id}${isPaidModel(id) ? ' 💰' : ''}`, id), 0);
+    sel.value = id;
+  }
+  const input = $(`#modelInput-${role}`);
+  if (input) input.value = id;
+  toast(`✅ ${id} 저장됨`, 'success', 1500);
   const warn = $(`#paidWarn-${role}`);
   if (warn) warn.classList.toggle('hidden', !isPaidModel(id));
   if (isPaidModel(id)) toast(`💰 ${id}: 무료 등급에서 사용 불가·과금될 수 있어요`, 'warn', 6000);
