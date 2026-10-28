@@ -126,16 +126,23 @@ const SAVE_PREFIX = 'RPGSAVE1:';
 const DEFAULT_MODELS = {
   chat: 'gemini-3.8-flash',
   analysis: 'gemini-3.8-flash',
-  tts: 'gemini-3.8-flash-tts',
+  tts: 'gemini-3.8-flash-lite-tts',      // 속도 우선(저지연) TTS
+  ttsQuality: 'gemini-3.8-flash-tts',    // 품질 우선 TTS
   fallbackChain: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
 };
+const LEGACY_TTS_DEFAULT = 'gemini-3.8-flash-tts';
 // TTS 전용 폴백 (일반 폴백 체인은 텍스트 모델이라 TTS에 쓰지 않음)
 const TTS_FALLBACKS = ['gemini-2.5-flash-preview-tts'];
+const TTS_PREFS = {
+  quality: { label: '🎧 품질 우선', desc: '품질 TTS 모델' },
+  speed: { label: '⚡ 속도 우선', desc: '저지연 TTS 모델 (기본)' },
+  browser: { label: '📢 브라우저 기본 음성', desc: '즉시 재생 · API 호출 없음' }
+};
 // 모델 목록 조회 실패 시 드롭다운 기본값
 const DEFAULT_MODEL_OPTIONS = [
   'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite',
   'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
-  'gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts'
+  'gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts'
 ];
 // 무료 등급에서 사용 불가하거나 과금될 수 있는 모델 패턴
 const PAID_MODEL_PATTERNS = [/argon/i, /gemini-4/i, /3\.1-pro/i, /pro-preview/i, /ultra/i];
@@ -233,9 +240,11 @@ function defaultSettings() {
     autoStopOnSilence: true,
     showSubtitles: true,
     voiceName: DEFAULT_VOICE,
-    models: { chat: DEFAULT_MODELS.chat, analysis: DEFAULT_MODELS.analysis, tts: DEFAULT_MODELS.tts, fallbackChain: [...DEFAULT_MODELS.fallbackChain] },
+    ttsPreference: 'speed',               // 'quality' | 'speed' | 'browser'
+    models: { chat: DEFAULT_MODELS.chat, analysis: DEFAULT_MODELS.analysis, tts: DEFAULT_MODELS.tts, ttsQuality: DEFAULT_MODELS.ttsQuality, fallbackChain: [...DEFAULT_MODELS.fallbackChain] },
     useAnalysisModelForDeepTalk: false,
-    onlyCoreTracksInRandom: false
+    onlyCoreTracksInRandom: false,
+    showDebugTiming: true
   };
 }
 
@@ -291,13 +300,19 @@ function migrateState(raw) {
   const rs = isObj(raw.settings) ? raw.settings : {};
   const st = { ...d.settings, ...rs };
   st.models = { ...d.settings.models, ...(isObj(rs.models) ? rs.models : {}) };
-  for (const r of ['chat', 'analysis', 'tts']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
+  // 이전 기본 TTS 모델을 쓰던 저장 데이터는 새 저지연 기본값으로 옮기고, 기존 모델은 품질 우선용으로 남긴다
+  if (isObj(rs.models) && !rs.models.ttsQuality && normalizeModelId(rs.models.tts) === LEGACY_TTS_DEFAULT) {
+    st.models.tts = DEFAULT_MODELS.tts;
+    st.models.ttsQuality = LEGACY_TTS_DEFAULT;
+  }
+  for (const r of ['chat', 'analysis', 'tts', 'ttsQuality']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
+  if (!TTS_PREFS[st.ttsPreference]) st.ttsPreference = 'speed';
   st.models.fallbackChain = (Array.isArray(st.models.fallbackChain) ? st.models.fallbackChain : []).map(normalizeModelId).filter(Boolean);
   if (!st.models.fallbackChain.length) st.models.fallbackChain = [...DEFAULT_MODELS.fallbackChain];
   st.stage = clampInt(st.stage, 1, 4, 1);
   st.timerPreset = TIMER_PRESETS.includes(Number(st.timerPreset)) ? Number(st.timerPreset) : 5;
   if (!INPUT_MODES[st.inputMode]) st.inputMode = 'record';
-  for (const k of ['excludeWaitTime', 'autoStopOnSilence', 'showSubtitles', 'useAnalysisModelForDeepTalk', 'onlyCoreTracksInRandom']) {
+  for (const k of ['excludeWaitTime', 'autoStopOnSilence', 'showSubtitles', 'useAnalysisModelForDeepTalk', 'onlyCoreTracksInRandom', 'showDebugTiming']) {
     if (typeof st[k] !== 'boolean') st[k] = d.settings[k];
   }
   if (!VOICES.some(v => v.name === st.voiceName)) st.voiceName = DEFAULT_VOICE;
@@ -701,7 +716,7 @@ function fmtCooldown(ms) {
 }
 
 // ===== [SECTION: GEMINI_CLIENT] =====
-const runtime = { modelList: null, lastResponder: null, toastOnce: new Map() };
+const runtime = { modelList: null, lastResponder: null, toastOnce: new Map(), metrics: [], prefetch: null, importCandidate: null };
 
 class GeminiError extends Error {
   constructor(message, opts = {}) {
@@ -714,25 +729,31 @@ class GeminiError extends Error {
 function modelForRole(role) {
   const m = state.settings.models;
   if (role === 'analysis') return m.analysis || DEFAULT_MODELS.analysis;
-  if (role === 'tts') return m.tts || DEFAULT_MODELS.tts;
+  if (role === 'tts') return (state.settings.ttsPreference === 'quality' ? m.ttsQuality : m.tts) || DEFAULT_MODELS.tts;
+  if (role === 'ttsQuality') return m.ttsQuality || DEFAULT_MODELS.ttsQuality;
   return m.chat || DEFAULT_MODELS.chat;
 }
 function chainForRole(role, override) {
   const first = normalizeModelId(override || modelForRole(role));
-  if (role === 'tts') return uniq([first, ...TTS_FALLBACKS].filter(Boolean));
-  return uniq([first, ...state.settings.models.fallbackChain.map(normalizeModelId)].filter(Boolean));
+  const m = state.settings.models;
+  if (role === 'tts') return uniq([first, m.tts, m.ttsQuality, ...TTS_FALLBACKS].map(normalizeModelId).filter(Boolean));
+  return uniq([first, ...m.fallbackChain.map(normalizeModelId)].filter(Boolean));
 }
 
-// 회화는 thinking 낮게, 분석은 높게. 모델 세대별로 설정 형식이 다르다.
+// 회화는 모델이 지원하는 가장 낮은 thinking('minimal'), 분석은 높게('high'). 모델 세대별로 설정 형식이 다르다.
 function thinkingConfigFor(model, level) {
   if (!level || /tts/i.test(model)) return null;
   if (/gemini-(1\.|2\.0)/i.test(model)) return null;
   if (/gemini-2\.5/i.test(model)) {
     if (level === 'high') return { thinkingBudget: -1 };
-    return { thinkingBudget: /pro/i.test(model) ? 128 : 0 };
+    return { thinkingBudget: /pro/i.test(model) ? 128 : 0 }; // 2.5 Pro는 thinking을 끌 수 없어 최소 128
   }
-  return { thinkingLevel: level === 'high' ? 'high' : 'low' };
+  if (level === 'high') return { thinkingLevel: 'high' };
+  if (level === 'minimal' && !/pro/i.test(model)) return { thinkingLevel: 'minimal' }; // Pro 계열은 low가 최저
+  return { thinkingLevel: 'low' };
 }
+// 모델이 해당 thinking 값을 거부하면 한 단계씩 내려서 재시도: minimal → low → 미지정
+const lowerThinking = level => (level === 'minimal' ? 'low' : null);
 
 function parseRetryDelay(json) {
   const details = json?.error?.details;
@@ -744,25 +765,81 @@ function parseRetryDelay(json) {
   return m ? parseFloat(m[1]) : null;
 }
 
-async function requestModel(model, body, signal) {
-  const key = getApiKey();
-  if (!key) throw new GeminiError('Gemini API 키가 없어요. ⚙️ 설정에서 입력해 주세요.', { code: 'NO_KEY' });
+// fetch 대신 XHR: 오디오 업로드 완료 시점(upload.onload)과 스트리밍 진행(onprogress)을 둘 다 잴 수 있다
+function xhrPost(url, body, { signal, onUploaded, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.timeout = 90000; // 응답이 영영 안 오는 경우에도 대화가 멈추지 않도록
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('x-goog-api-key', getApiKey());
+    if (onUploaded) xhr.upload.onload = () => onUploaded(performance.now());
+    if (onProgress) xhr.onprogress = () => onProgress(xhr.responseText, xhr.status);
+    xhr.onload = () => resolve({ status: xhr.status, statusText: xhr.statusText, text: xhr.responseText });
+    xhr.onerror = () => reject(Object.assign(new Error('network error'), { gotStatus: xhr.status, partialText: xhr.responseText }));
+    xhr.ontimeout = () => reject(new Error('timeout'));
+    xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
+    if (signal) signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.send(JSON.stringify(body));
+  });
+}
+
+// SSE 응답 텍스트에서 완성된 이벤트만 잘라 data JSON을 넘긴다 (cursor로 이어서 처리)
+function consumeSse(sse, text, onData) {
+  const chunk = text.slice(sse.cursor);
+  const re = /\r?\n\r?\n/g;
+  let m, start = 0;
+  while ((m = re.exec(chunk))) {
+    const evt = chunk.slice(start, m.index);
+    start = m.index + m[0].length;
+    const data = evt.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart()).join('\n');
+    if (!data) continue;
+    let obj;
+    try { obj = JSON.parse(data); } catch { continue; }
+    onData(obj);
+  }
+  sse.cursor += start;
+}
+function parseErrorBody(text) {
+  try { return JSON.parse(text); } catch {}
+  const m = /data:\s*(\{[\s\S]*\})/.exec(text || '');
+  if (m) { try { return JSON.parse(m[1]); } catch {} }
+  return null;
+}
+
+/**
+ * 모델 1개에 1회 요청. stream=true면 streamGenerateContent(SSE)로 받아 누적 텍스트를 onText로 흘려준다.
+ * 반환: 일반 → GenerateContentResponse JSON, 스트림 → { streamed, text, modelVersion, blockReason, finishReason }
+ */
+async function requestModel(model, body, signal, { stream = false, onUploaded = null, onText = null } = {}) {
+  if (!getApiKey()) throw new GeminiError('Gemini API 키가 없어요. ⚙️ 설정에서 입력해 주세요.', { code: 'NO_KEY' });
   if (navigator.onLine === false) throw new GeminiError('인터넷 연결이 끊겨 있어요. 연결 후 다시 시도해 주세요.', { code: 'OFFLINE' });
+  const url = `${API_BASE}/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
+  let acc = '', modelVersion = null, finishReason = null, blockReason = null, sseError = null;
+  const sse = { cursor: 0 };
+  const handleData = obj => {
+    if (obj.error) { sseError = obj.error; return; }
+    modelVersion = obj.modelVersion || modelVersion;
+    blockReason = obj.promptFeedback?.blockReason || blockReason;
+    const c = obj.candidates?.[0];
+    if (c?.finishReason) finishReason = c.finishReason;
+    const t = (c?.content?.parts || []).filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('');
+    if (t) { acc += t; onText && onText(acc); }
+  };
   let res;
   try {
-    res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify(body),
-      signal
+    res = await xhrPost(url, body, {
+      signal,
+      onUploaded,
+      onProgress: stream ? (text, status) => { if (status === 200) consumeSse(sse, text, handleData); } : null
     });
   } catch (e) {
     if (isAbort(e)) throw e;
-    throw new GeminiError(`네트워크 오류 (${e.message || 'fetch failed'})`, { retryable: true, model });
+    throw new GeminiError(`네트워크 오류 (${e.message || 'request failed'})`, { retryable: true, model, streamBroken: stream });
   }
-  let json = null;
-  try { json = await res.json(); } catch {}
-  if (!res.ok) {
+  if (res.status !== 200) {
+    const json = parseErrorBody(res.text);
     const msg = json?.error?.message || res.statusText || `HTTP ${res.status}`;
     const unsupported = /not (found|supported)|unsupported|does not support|is not available|no longer available/i.test(msg);
     throw new GeminiError(msg, {
@@ -773,7 +850,12 @@ async function requestModel(model, body, signal) {
       thinkingIssue: res.status === 400 && /thinking/i.test(msg)
     });
   }
-  return json || {};
+  if (!stream) {
+    try { return JSON.parse(res.text); } catch { throw new GeminiError('응답 JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
+  }
+  consumeSse(sse, `${res.text}\n\n`, handleData);
+  if (sseError) throw new GeminiError(sseError.message || '스트림 오류', { status: sseError.code || 0, retryable: true, model, streamBroken: true });
+  return { streamed: true, text: acc.trim(), modelVersion, finishReason, blockReason };
 }
 
 function extractText(json) {
@@ -787,6 +869,20 @@ function parseJsonLoose(text) {
   const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}');
   if (a >= 0 && b > a) return JSON.parse(cleaned.slice(a, b + 1));
   throw new Error('JSON parse failed');
+}
+// 스트리밍 중인 미완성 JSON에서 문자열 필드 하나가 닫히는 즉시 그 값을 꺼낸다 (아직이면 null)
+function extractJsonStringField(text, key) {
+  const m = new RegExp(`"${key}"\\s*:\\s*"`).exec(text);
+  if (!m) return null;
+  const start = m.index + m[0].length - 1;
+  let escaped = false;
+  for (let i = start + 1; i < text.length; i++) {
+    const c = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (c === '\\') { escaped = true; continue; }
+    if (c === '"') { try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; } }
+  }
+  return null;
 }
 
 function friendlyError(e) {
@@ -810,53 +906,109 @@ function noteResponder(model, role, fallbackUsed) {
   runtime.lastResponder = { model, role, fallbackUsed, at: Date.now() };
   renderCornerBadge();
 }
+const shortReason = e => (e?.status ? String(e.status) : e?.parseFail ? 'parse' : e?.streamBroken ? 'stream' : 'net');
 
 /**
  * 공통 호출 함수.
  * - schema가 있으면 JSON 모드 + responseSchema, 파싱 실패 시 같은 모델로 1회 재요청
  * - 429·500·503·404·모델 미지원이면 지수 백오프(1초→2초) 후 폴백 체인의 다음 모델로
+ * - stream: { onReply } 를 주면 streamGenerateContent로 받아 "reply" 문자열이 닫히는 즉시 onReply 호출.
+ *   스트리밍이 실패하면 같은 모델로 generateContent 재요청. reply를 이미 내보낸 뒤 끊기면 { partial: true }로 반환.
+ * - meta: 계측 객체. requested / responder / attempts / tReqStart / tUploaded / tReply / tFull / streamed 등을 채운다.
  */
-async function callGemini({ role = 'chat', contents, systemInstruction, schema, thinking = null, generationConfig = {}, raw = false, signal, modelOverride } = {}) {
+async function callGemini({ role = 'chat', contents, systemInstruction, schema, thinking = null, generationConfig = {}, raw = false, signal, modelOverride, stream = null, meta = null, quiet = false } = {}) {
   const chain = chainForRole(role, modelOverride);
+  if (meta) { meta.requested = meta.requested || chain[0]; meta.attempts = meta.attempts || []; }
+  const trackUpload = !!meta?.trackUpload;
+  const now = () => performance.now();
+  const finish = (responder, i, extra = {}) => {
+    noteResponder(responder, role, i > 0);
+    if (meta) {
+      meta.responder = responder;
+      meta.tFull = now();
+      if (meta.tReply == null) meta.tReply = meta.tFull;
+      Object.assign(meta, extra);
+    }
+  };
   let lastErr = null;
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i];
     let useThinking = thinking;
     let parseRetried = false;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    let useStream = !!(stream && schema && !raw);
+    for (let attempt = 0; attempt < 6; attempt++) {
       const body = { contents, generationConfig: { ...generationConfig } };
       if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
       if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseSchema = schema; }
       const tc = thinkingConfigFor(model, useThinking);
       if (tc) body.generationConfig.thinkingConfig = tc;
+      if (meta && meta.tReqStart == null) meta.tReqStart = now();
+      const onUploaded = trackUpload ? t => { if (meta.tUploaded == null) meta.tUploaded = t; } : null;
       try {
-        const json = await requestModel(model, body, signal);
+        if (useStream) {
+          const res = await requestModel(model, body, signal, {
+            stream: true,
+            onUploaded,
+            onText: acc => {
+              if (stream.replyEmitted) return;
+              const r = extractJsonStringField(acc, 'reply');
+              if (r == null) return;
+              stream.replyEmitted = true;
+              stream.reply = r;
+              if (meta) meta.tReply = now();
+              stream.onReply(r);
+            }
+          });
+          const responder = normalizeModelId(res.modelVersion) || model;
+          let data = null;
+          if (res.text) { try { data = parseJsonLoose(res.text); } catch {} }
+          if (data) { finish(responder, i, { streamed: true }); return { data, model: responder, streamed: true }; }
+          if (stream.replyEmitted) { finish(responder, i, { streamed: true, partial: true }); return { data: { reply: stream.reply }, model: responder, streamed: true, partial: true }; }
+          // 스트림은 끝났지만 쓸 수 있는 JSON이 없음 → 같은 모델로 일반 요청
+          if (meta) { meta.streamFallback = res.blockReason || res.finishReason || 'empty'; meta.attempts.push({ model, status: 'stream', reason: meta.streamFallback }); }
+          useStream = false;
+          continue;
+        }
+        const json = await requestModel(model, body, signal, { onUploaded });
         const responder = normalizeModelId(json.modelVersion) || model;
-        if (raw) { noteResponder(responder, role, i > 0); return { json, model: responder }; }
+        if (raw) { finish(responder, i); return { json, model: responder }; }
         const text = extractText(json);
         if (!text) {
           const reason = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason || 'EMPTY';
           throw new GeminiError(`빈 응답 (${reason})`, { parseFail: true, retryable: true, model });
         }
-        if (!schema) { noteResponder(responder, role, i > 0); return { text, model: responder }; }
+        if (!schema) { finish(responder, i); return { text, model: responder }; }
         let data;
         try { data = parseJsonLoose(text); } catch { throw new GeminiError('JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
-        noteResponder(responder, role, i > 0);
+        finish(responder, i);
         return { data, model: responder };
       } catch (e) {
         if (isAbort(e)) throw e;
         lastErr = e;
-        if (e.thinkingIssue && useThinking) { useThinking = null; continue; }
+        if (meta) meta.attempts.push({ model, status: shortReason(e), reason: String(e.message || '').slice(0, 80) });
+        if (e.thinkingIssue && useThinking) { useThinking = lowerThinking(useThinking); continue; }
+        if (useStream && stream.replyEmitted) {
+          // 대사는 이미 보여주고 읽는 중 → 다른 응답으로 바꾸지 않고 대사만 확정
+          finish(model, i, { streamed: true, partial: true });
+          return { data: { reply: stream.reply }, model, streamed: true, partial: true };
+        }
+        if (useStream && (e.streamBroken || e.status === 0)) {
+          if (meta) meta.streamFallback = shortReason(e);
+          useStream = false;
+          continue;
+        }
         if (e.parseFail && !parseRetried) { parseRetried = true; continue; }
         if (!e.retryable) throw friendlyError(e);
         break;
       }
     }
     if (i < chain.length - 1) {
-      if (lastErr?.status === 429) {
-        toast(`⏳ ${model} 요청 한도 초과${lastErr.retryDelay ? ` — ${Math.ceil(lastErr.retryDelay)}초 후 재사용 가능` : ''}. ${chain[i + 1]}(으)로 전환할게요`, 'warn', 5000);
-      } else {
-        toast(`⚠️ ${model} 응답 실패 → ${chain[i + 1]}(으)로 전환`, 'warn');
+      if (!quiet) {
+        if (lastErr?.status === 429) {
+          toast(`⏳ ${model} 요청 한도 초과${lastErr.retryDelay ? ` — ${Math.ceil(lastErr.retryDelay)}초 후 재사용 가능` : ''}. ${chain[i + 1]}(으)로 전환할게요`, 'warn', 5000);
+        } else {
+          toast(`⚠️ ${model} 응답 실패 → ${chain[i + 1]}(으)로 전환`, 'warn');
+        }
       }
       await sleep(Math.min(1000 * 2 ** i, 2000), signal);
     }
@@ -895,14 +1047,17 @@ function loadModelCache() {
 function modelOptionsFor(role) {
   const ids = runtime.modelList ? runtime.modelList.map(m => m.id) : DEFAULT_MODEL_OPTIONS;
   const isTts = id => /tts/i.test(id);
+  const wantTts = role === 'tts' || role === 'ttsQuality';
   const nonChat = /embedding|imagen|image-generation|veo|aqa|native-audio|live|learnlm/i;
-  let list = role === 'tts' ? ids.filter(isTts) : ids.filter(id => !isTts(id) && !nonChat.test(id));
-  if (!list.length) list = DEFAULT_MODEL_OPTIONS.filter(id => (role === 'tts') === isTts(id));
-  return uniq([modelForRole(role), ...list]);
+  let list = wantTts ? ids.filter(isTts) : ids.filter(id => !isTts(id) && !nonChat.test(id));
+  if (!list.length) list = DEFAULT_MODEL_OPTIONS.filter(id => wantTts === isTts(id));
+  return uniq([state.settings.models[role] || modelForRole(role), ...list]);
 }
 
-async function geminiTTS(text, voiceName, signal) {
-  const { json } = await callGemini({
+// 반환: { buffer, model, attempts }
+async function geminiTTS(text, voiceName) {
+  const meta = { attempts: [] };
+  const { json, model } = await callGemini({
     role: 'tts',
     contents: [{ role: 'user', parts: [{ text }] }],
     generationConfig: {
@@ -910,14 +1065,15 @@ async function geminiTTS(text, voiceName, signal) {
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
     },
     raw: true,
-    signal
+    meta,
+    quiet: true
   });
   const part = (json?.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data || p.inline_data?.data);
   const inline = part?.inlineData || part?.inline_data;
   if (!inline) throw new Error('TTS 응답에 오디오가 없어요');
   const mime = inline.mimeType || inline.mime_type || '';
   const rate = Number((/rate=(\d+)/i.exec(mime) || [])[1]) || 24000;
-  return pcm16Base64ToBuffer(inline.data, rate);
+  return { buffer: pcm16Base64ToBuffer(inline.data, rate), model, attempts: meta.attempts, requested: meta.requested };
 }
 
 // ===== [SECTION: AUDIO] =====
@@ -926,7 +1082,7 @@ const audio = {
   analyser: null, analyserSource: null, monitorTimer: null,
   speechDetected: false, lastLoudAt: 0, recStartedAt: 0,
   currentSource: null, playResolve: null, speechUnlocked: false,
-  ttsCache: new Map()
+  ttsCache: new Map(), ttsInflight: new Map()
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const stt = { active: null, cancelled: false };
@@ -1129,18 +1285,26 @@ function pcm16Base64ToBuffer(b64, sampleRate = 24000) {
   return buffer;
 }
 
-function playBuffer(buffer) {
+// 재생 시작 시각은 "재생 명령을 내린 시점"으로 기록한다 (시스템 볼륨이 꺼져 있어도 동일하게 측정)
+function markPlay(metric) {
+  if (metric && metric.tPlay == null) metric.tPlay = performance.now();
+}
+function playBuffer(buffer, metric) {
   return new Promise(resolve => {
     stopPlayback();
     const ctx = ensureAudioContext();
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(ctx.destination);
-    const done = () => { if (audio.currentSource === src) { audio.currentSource = null; audio.playResolve = null; } resolve(); };
+    let guard = null;
+    const done = () => { clearTimeout(guard); if (audio.currentSource === src) { audio.currentSource = null; audio.playResolve = null; } resolve(); };
     src.onended = done;
     audio.currentSource = src;
     audio.playResolve = done;
+    markPlay(metric);
     src.start();
+    // AudioContext가 잠겨(suspended) onended가 오지 않는 경우에도 대화가 멈추지 않도록
+    guard = setTimeout(done, buffer.duration * 1000 + 1500);
   });
 }
 function stopPlayback() {
@@ -1175,7 +1339,7 @@ function pickBrowserVoice() {
   return pool.slice().sort((a, b) => score(b) - score(a))[0];
 }
 
-function speakBrowser(text) {
+function speakBrowser(text, metric) {
   return new Promise(resolve => {
     if (!('speechSynthesis' in window)) { resolve(); return; }
     try { speechSynthesis.cancel(); } catch {}
@@ -1190,32 +1354,79 @@ function speakBrowser(text) {
     u.onend = fin;
     u.onerror = fin;
     audio.playResolve = fin;
+    markPlay(metric);
     speechSynthesis.speak(u);
   });
 }
 
-/** reply 음성 출력: Gemini TTS → 실패 시 speechSynthesis 폴백. 반환값 'gemini' | 'browser' */
-async function speak(text, { voice, signal, onStart, quietFallback = false } = {}) {
+// 같은 문장의 TTS는 캐시 → 진행 중 요청 공유 → 새 요청 순으로 얻는다 (첫 질문 미리 준비와 공유)
+function getTtsAudio(text, voiceName) {
+  const key = `${modelForRole('tts')}|${voiceName}|${text}`;
+  const cached = audio.ttsCache.get(key);
+  if (cached) return Promise.resolve({ ...cached, cached: true });
+  let p = audio.ttsInflight.get(key);
+  if (!p) {
+    p = geminiTTS(text, voiceName)
+      .then(r => {
+        audio.ttsCache.set(key, r);
+        if (audio.ttsCache.size > 40) audio.ttsCache.delete(audio.ttsCache.keys().next().value);
+        return r;
+      })
+      .finally(() => audio.ttsInflight.delete(key));
+    audio.ttsInflight.set(key, p);
+  }
+  return p;
+}
+const TTS_TIMEOUT_MS = 12000;
+function withTimeout(promise, ms, label) {
+  let t;
+  return Promise.race([promise, new Promise((_, reject) => { t = setTimeout(() => reject(new Error(`${label} ${ms / 1000}초 초과`)), ms); })])
+    .finally(() => clearTimeout(t));
+}
+function abortable(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    promise.then(resolve, reject);
+  });
+}
+
+/**
+ * reply 음성 출력. 설정의 TTS 선호에 따라 Gemini TTS(속도/품질) 또는 브라우저 음성.
+ * Gemini TTS 실패 시 speechSynthesis로 폴백. 반환값 'gemini' | 'browser' | 'none'
+ * metric을 주면 tTtsStart / tTtsReady / tPlay / ttsMode / ttsModel 을 기록한다.
+ */
+async function speak(text, { voice, signal, onStart, quietFallback = false, metric = null } = {}) {
   if (!text) return 'none';
   const voiceName = voice || state.settings.voiceName;
-  const key = `${voiceName}|${text}`;
+  if (state.settings.ttsPreference === 'browser') {
+    if (metric) metric.ttsMode = 'browser';
+    onStart && onStart('browser');
+    await speakBrowser(text, metric);
+    return 'browser';
+  }
+  if (metric) metric.tTtsStart = performance.now();
   try {
-    let buffer = audio.ttsCache.get(key);
-    if (!buffer) {
-      buffer = await geminiTTS(text, voiceName, signal);
-      audio.ttsCache.set(key, buffer);
-      if (audio.ttsCache.size > 40) audio.ttsCache.delete(audio.ttsCache.keys().next().value);
-    }
+    const r = await abortable(withTimeout(getTtsAudio(text, voiceName), TTS_TIMEOUT_MS, 'TTS 응답'), signal);
     if (signal?.aborted) return 'none';
+    if (metric) {
+      metric.tTtsReady = performance.now();
+      metric.ttsMode = r.cached ? 'gemini(캐시)' : 'gemini';
+      metric.ttsModel = r.model;
+      const failed = (r.attempts || []).map(a => `${a.model}:${a.status}`);
+      if (failed.length) metric.ttsFallback = `${r.requested} → ${r.model} (${failed.join(', ')})`;
+    }
     onStart && onStart('gemini');
-    await playBuffer(buffer);
+    await playBuffer(r.buffer, metric);
     return 'gemini';
   } catch (e) {
     if (isAbort(e) || signal?.aborted) return 'none';
     console.warn('TTS fallback', e);
+    if (metric) { metric.tTtsReady = performance.now(); metric.ttsMode = 'browser(폴백)'; metric.ttsFallback = `Gemini TTS 실패: ${String(e.message).slice(0, 60)}`; }
     if (!quietFallback) toastOnce('tts-fallback', `🔊 Gemini 음성 실패 → 브라우저 음성으로 대체 (${e.message})`, 'warn', 60000);
     onStart && onStart('browser');
-    await speakBrowser(text);
+    await speakBrowser(text, metric);
     return 'browser';
   }
 }
@@ -1312,7 +1523,9 @@ const TURN_SCHEMA = {
     },
     angleTag: { type: 'STRING', description: 'The conversation angle covered in this turn, 3-5 English words.' }
   },
-  required: ['transcript', 'reply', 'hud', 'signals', 'angleTag']
+  required: ['transcript', 'reply', 'hud', 'signals', 'angleTag'],
+  // reply를 맨 앞에 생성시켜 스트리밍으로 대사부터 받는다
+  propertyOrdering: ['reply', 'transcript', 'hud', 'pronunciationNoteKo', 'signals', 'angleTag']
 };
 const OPENING_SCHEMA = {
   type: 'OBJECT',
@@ -1320,7 +1533,8 @@ const OPENING_SCHEMA = {
     reply: { type: 'STRING', description: 'Your opening line: a one-line casual greeting + your first question.' },
     angleTag: { type: 'STRING', description: 'The angle of your opening question, 3-5 English words.' }
   },
-  required: ['reply', 'angleTag']
+  required: ['reply', 'angleTag'],
+  propertyOrdering: ['reply', 'angleTag']
 };
 const CLOSING_SCHEMA = {
   type: 'OBJECT',
@@ -1366,10 +1580,56 @@ function buildTurnNote(kind, timeUp) {
   return note;
 }
 
+// ---- 첫 질문 미리 준비: 토픽을 고르는 시점에 요청하고, 같은 토픽·같은 Stage로 시작할 때만 사용 ----
+const OPENING_KICKOFF = "(Session start. You speak first: one short casual greeting line + your opening question. I haven't said anything yet.)";
+function sessionRoleFor(topic, stage) {
+  return state.settings.useAnalysisModelForDeepTalk && stage >= 3 && topic.track === 4 ? 'analysis' : 'chat';
+}
+const prefetchKey = (topic, stage) => `${topic.id}|${stage}|${sessionRoleFor(topic, stage)}`;
+const chatThinking = () => (S && S.chatRole === 'analysis' ? 'high' : 'minimal');
+
+function discardPrefetch() {
+  const p = runtime.prefetch;
+  runtime.prefetch = null;
+  if (p) p.abort.abort();
+}
+function startOpeningPrefetch(topic) {
+  discardPrefetch();
+  if (!getApiKey() || navigator.onLine === false) return;
+  const stage = state.settings.stage;
+  const role = sessionRoleFor(topic, stage);
+  const entry = { key: prefetchKey(topic, stage), abort: new AbortController(), meta: { attempts: [] } };
+  entry.promise = callGemini({
+    role,
+    contents: [{ role: 'user', parts: [{ text: OPENING_KICKOFF }] }],
+    systemInstruction: buildSystemInstruction(topic, stage, topicProgressOf(topic.id)),
+    schema: OPENING_SCHEMA,
+    thinking: role === 'analysis' ? 'high' : 'minimal',
+    signal: entry.abort.signal,
+    meta: entry.meta,
+    quiet: true
+  }).then(r => {
+    // 대사 음성도 미리 받아 둔다 (브라우저 음성 모드 제외)
+    const reply = String(r.data?.reply || '').trim();
+    if (reply && runtime.prefetch === entry && state.settings.ttsPreference !== 'browser') getTtsAudio(reply, state.settings.voiceName).catch(() => {});
+    return r;
+  });
+  entry.promise.catch(() => {});
+  runtime.prefetch = entry;
+}
+function takePrefetch(key) {
+  const p = runtime.prefetch;
+  runtime.prefetch = null;
+  if (!p) return null;
+  if (p.key !== key) { p.abort.abort(); return null; }
+  return p;
+}
+
 function openSetup(topic, { isRandom = false, onCooldown = false } = {}) {
   if (S) { toast('진행 중인 대화가 있어요. 먼저 종료해 주세요', 'warn'); switchView('talk'); return; }
   talk.pending = { topic, isRandom, onCooldown };
   talk.report = null;
+  startOpeningPrefetch(topic);
   switchView('talk');
   renderTalk();
 }
@@ -1377,6 +1637,7 @@ function openSetup(topic, { isRandom = false, onCooldown = false } = {}) {
 async function startSession() {
   const p = talk.pending;
   if (!p || S) return;
+  const clickAt = performance.now();
   if (!getApiKey()) { toast('먼저 ⚙️ 설정에서 Gemini API 키를 입력해 주세요', 'warn'); openSettings(); return; }
   // iOS: 탭 이벤트 안에서 오디오 잠금 해제
   ensureAudioContext();
@@ -1393,7 +1654,6 @@ async function startSession() {
   const topic = p.topic;
   const stage = state.settings.stage;
   const tp = topicProgressOf(topic.id);
-  const deepTalk = state.settings.useAnalysisModelForDeepTalk && stage >= 3 && topic.track === 4;
   S = {
     id: uid('ses'), topic, stage,
     isRandom: p.isRandom, onCooldown: p.onCooldown,
@@ -1405,9 +1665,10 @@ async function startSession() {
     pauses: new Set(),
     timeUp: false, closing: false,
     hudOpen: true, hudUnseen: 0,
-    chatRole: deepTalk ? 'analysis' : 'chat',
+    chatRole: sessionRoleFor(topic, stage),
     systemInstruction: buildSystemInstruction(topic, stage, tp),
-    draftText: '', lastFailedInput: null, ttsMode: null, openingAngle: null
+    draftText: '', lastFailedInput: null, ttsMode: null, openingAngle: null,
+    startClickAt: clickAt, dataPending: null
   };
   talk.pending = null;
   talk.report = null;
@@ -1417,39 +1678,85 @@ async function startSession() {
   await requestOpening();
 }
 
+/**
+ * AI 대사 1줄을 화면에 띄우고 바로 읽기 시작하는 헬퍼. 스트리밍에서 reply가 완성되는 즉시 show()가 불린다.
+ * 같은 줄은 한 번만 표시된다. 읽기가 끝나면 (시간 종료 처리 중이 아니면) 곧바로 사용자 차례로 넘긴다.
+ */
+function makeLineStarter(sid, metric, onShown) {
+  const line = { reply: null, speakP: null };
+  line.show = reply => {
+    if (!S || S.id !== sid || line.reply != null || !reply) return;
+    line.reply = reply;
+    onShown && onShown(reply);
+    appendAiBubble(reply);
+    line.speakP = aiSpeak(reply, metric).then(() => {
+      if (metric) { metric.speakEnded = true; maybeFinalizeMetric(metric); }
+      if (S && S.id === sid && !S.timeUp && !S.closing && (S.status === 'speaking' || S.status === 'processing')) {
+        S.status = 'ready';
+        renderControls();
+      }
+    });
+  };
+  return line;
+}
+
 async function requestOpening() {
   if (!S) return;
   const sid = S.id;
   S.status = 'opening';
   renderControls();
+  const m = newMetric('opening', null);
+  if (S.startClickAt != null) { m.t0 = S.startClickAt; S.startClickAt = null; }
+  const line = makeLineStarter(sid, m, reply => S.history.push({ role: 'user', text: '(Session start)' }, { role: 'model', text: reply }));
   try {
-    S.abort = new AbortController();
-    const { data } = await callGemini({
-      role: S.chatRole,
-      contents: [{ role: 'user', parts: [{ text: "(Session start. You speak first: one short casual greeting line + your opening question. I haven't said anything yet.)" }] }],
-      systemInstruction: S.systemInstruction,
-      schema: OPENING_SCHEMA,
-      thinking: S.chatRole === 'analysis' ? 'high' : 'low',
-      signal: S.abort.signal
-    });
-    if (!S || S.id !== sid) return;
-    const reply = String(data?.reply || '').trim() || "Hey! Good to see you. So, what's been going on with you lately?";
+    let data = null;
+    const pf = takePrefetch(prefetchKey(S.topic, S.stage));
+    if (pf) {
+      try {
+        const r = await pf.promise;
+        if (!S || S.id !== sid) return;
+        data = r.data;
+        const t = performance.now();
+        Object.assign(m, { prefetched: true, requested: pf.meta.requested, responder: r.model, attempts: pf.meta.attempts || [], tReqStart: m.t0, tReply: t, tFull: t });
+        noteResponder(r.model, S.chatRole, (pf.meta.attempts || []).length > 0);
+      } catch (e) {
+        if (!S || S.id !== sid) return;
+        m.prefetchFailed = true;
+      }
+    }
+    if (!data) {
+      S.abort = new AbortController();
+      const r = await callGemini({
+        role: S.chatRole,
+        contents: [{ role: 'user', parts: [{ text: OPENING_KICKOFF }] }],
+        systemInstruction: S.systemInstruction,
+        schema: OPENING_SCHEMA,
+        thinking: chatThinking(),
+        signal: S.abort.signal,
+        meta: m,
+        stream: { onReply: line.show }
+      });
+      if (!S || S.id !== sid) return;
+      data = r.data;
+    }
     S.openingAngle = String(data?.angleTag || '').trim() || null;
-    S.history.push({ role: 'user', text: '(Session start)' }, { role: 'model', text: reply });
-    appendAiBubble(reply);
-    await aiSpeak(reply);
+    line.show(String(data?.reply || '').trim() || "Hey! Good to see you. So, what's been going on with you lately?");
+    maybeFinalizeMetric(m);
+    await line.speakP;
     if (!S || S.id !== sid) return;
-    if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
+    if (S.status === 'processing' || S.status === 'speaking' || S.status === 'opening') { S.status = 'ready'; renderControls(); }
     checkTimeUpWhenIdle();
   } catch (e) {
     if (isAbort(e) || !S || S.id !== sid) return;
+    m.error = e.message;
+    finalizeMetric(m);
     toast(`첫 질문을 받지 못했어요: ${e.message}`, 'error', 6000);
     S.status = 'openingFailed';
     renderControls();
   }
 }
 
-async function aiSpeak(text) {
+async function aiSpeak(text, metric = null) {
   if (!S) return;
   const sid = S.id;
   S.status = 'processing';
@@ -1457,7 +1764,11 @@ async function aiSpeak(text) {
   S.ttsAbort = new AbortController();
   await speak(text, {
     signal: S.ttsAbort.signal,
-    onStart: m => { if (S && S.id === sid && S.status === 'processing') { S.status = 'speaking'; S.ttsMode = m; renderControls(); } }
+    metric,
+    onStart: m => {
+      if (S && S.id === sid && S.status === 'processing') { S.status = 'speaking'; S.ttsMode = m; renderControls(); }
+      if (metric) setTimeout(() => maybeFinalizeMetric(metric), 0);
+    }
   });
 }
 function skipSpeech() {
@@ -1505,61 +1816,92 @@ async function processUserTurn(input) {
   if (!S) return;
   const sid = S.id;
   const timeUpAtSend = S.timeUp;
+  const prevData = S.dataPending;
+  let releaseData = () => {};
+  S.dataPending = new Promise(r => { releaseData = r; });
+  const inputType = input.kind === 'audio' ? 'audio' : input.source;
+  const m = newMetric('turn', inputType);
+  if (input.t0 != null) m.t0 = input.t0;
+  m.trackUpload = inputType === 'audio';
   S.status = 'processing';
   S.lastFailedInput = null;
+  if (inputType === 'keyboard') { S.draftText = ''; const ti = $('#talkInput'); if (ti) ti.value = ''; }
   renderControls();
+  const userIdx = appendUserBubble(inputType === 'audio' ? '🎙️ 전사 중…' : input.text.trim(), inputType, inputType === 'audio');
+  const line = makeLineStarter(sid, m);
   try {
-    let parts, localTranscript = null, inputType;
+    if (prevData) await prevData; // 끼어들기 했다면 이전 턴의 기록·HUD가 확정된 뒤 보낸다
+    if (!S || S.id !== sid) return;
+    let parts, localTranscript = null;
     if (input.kind === 'audio') {
       const prep = input.prepared || await prepareAudioForGemini(input.blob);
       if (!S || S.id !== sid) return;
       if (prep.tooShort) {
+        removeLogEntry(userIdx);
+        m.error = '녹음이 너무 짧음';
+        finalizeMetric(m);
         toast('녹음이 너무 짧아요. 조금 더 길게 말해 주세요', 'warn');
         S.status = 'ready'; renderControls(); checkTimeUpWhenIdle();
         return;
       }
       input.prepared = prep;
-      inputType = 'audio';
       parts = [{ text: buildTurnNote('audio', timeUpAtSend) }, { inlineData: prep.part }];
     } else {
       localTranscript = input.text.trim();
-      inputType = input.source;
       parts = [{ text: buildTurnNote(input.source, timeUpAtSend) }, { text: localTranscript }];
     }
     S.abort = new AbortController();
-    const { data } = await callGemini({
+    const { data, partial } = await callGemini({
       role: S.chatRole,
       contents: [...historyToContents(S.history), { role: 'user', parts }],
       systemInstruction: S.systemInstruction,
       schema: TURN_SCHEMA,
-      thinking: S.chatRole === 'analysis' ? 'high' : 'low',
-      signal: S.abort.signal
+      thinking: chatThinking(),
+      signal: S.abort.signal,
+      meta: m,
+      stream: { onReply: line.show }
     });
     if (!S || S.id !== sid) return;
     const turn = normalizeTurn(data, localTranscript, inputType);
+    if (line.reply != null) turn.reply = line.reply;
+    turn.hudMissing = !!partial;
     if (!turn.transcript) {
+      removeLogEntry(userIdx);
       toast('목소리를 알아듣지 못했어요. 다시 말해 주세요 🎙️', 'warn');
-      S.status = 'ready'; renderControls(); checkTimeUpWhenIdle();
+      if (line.reply != null) S.history.push({ role: 'user', text: '(unintelligible audio)' }, { role: 'model', text: line.reply });
+      releaseData();
+      maybeFinalizeMetric(m);
+      if (line.speakP) await line.speakP;
+      if (!S || S.id !== sid) return;
+      if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
+      checkTimeUpWhenIdle();
       return;
     }
     S.turns.push(turn);
     if (inputType === 'audio') S.usedAudio = true;
-    if (inputType === 'keyboard') S.draftText = '';
+    updateUserBubble(userIdx, turn.transcript);
     S.history.push({ role: 'user', text: turn.transcript }, { role: 'model', text: turn.reply });
-    appendUserBubble(turn.transcript, inputType);
-    addHudCard(turn, S.turns.length - 1);
-    appendAiBubble(turn.reply);
-    await aiSpeak(turn.reply);
+    addHudCard(turn, S.turns.length - 1); // HUD·signals는 대사 뒤에 조용히 도착
+    releaseData();
+    line.show(turn.reply); // 스트리밍이 아니었으면 여기서 표시·재생
+    maybeFinalizeMetric(m);
+    await line.speakP;
     if (!S || S.id !== sid) return;
     if (timeUpAtSend) { finishSession(); return; }
     if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
     checkTimeUpWhenIdle();
   } catch (e) {
     if (isAbort(e) || !S || S.id !== sid) return;
+    removeLogEntry(userIdx);
+    m.error = e.message;
+    finalizeMetric(m);
     toast(`응답 실패: ${e.message}`, 'error', 6000);
+    if (inputType === 'keyboard') S.draftText = input.text;
     S.lastFailedInput = input;
     S.status = 'ready';
     renderControls();
+  } finally {
+    releaseData();
   }
 }
 
@@ -1608,7 +1950,7 @@ async function startListeningStt() {
     S.sttActive = false;
     if (S.sttCancelled) { S.sttCancelled = false; if (S.status === 'listening') S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
     if (!text) { toast('인식된 말이 없어요. 다시 시도해 주세요', 'warn'); S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
-    processUserTurn({ kind: 'text', text, source: 'stt' });
+    processUserTurn({ kind: 'text', text, source: 'stt', t0: performance.now() });
   } catch (e) {
     if (!S || S.id !== sid) return;
     S.sttActive = false;
@@ -1622,12 +1964,13 @@ async function stopListening() {
   if (!S || S.status !== 'listening') return;
   if (S.sttActive) { stopBrowserStt(); return; } // onend → 결과 처리
   const sid = S.id;
+  const t0 = performance.now();
   S.status = 'processing';
   renderControls();
   const blob = await stopRecording();
   if (!S || S.id !== sid) return;
   if (!blob) { toast('녹음된 소리가 없어요. 다시 시도해 주세요', 'warn'); S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
-  processUserTurn({ kind: 'audio', blob });
+  processUserTurn({ kind: 'audio', blob, t0 });
 }
 
 function cancelListening() {
@@ -1647,11 +1990,11 @@ function sendTyped() {
   if (S.status === 'speaking') skipSpeech();
   else if (S.status !== 'ready') return;
   S.draftText = text;
-  processUserTurn({ kind: 'text', text, source: 'keyboard' });
+  processUserTurn({ kind: 'text', text, source: 'keyboard', t0: performance.now() });
 }
 function retryTurn() {
   if (!S || !S.lastFailedInput || S.status !== 'ready') return;
-  processUserTurn(S.lastFailedInput);
+  processUserTurn({ ...S.lastFailedInput, t0: performance.now() });
 }
 
 function switchInputMode(mode, silent = false) {
@@ -1678,7 +2021,9 @@ async function doClosing() {
   S.closing = true;
   S.status = 'closing';
   renderControls();
-  let reply = '';
+  if (S.dataPending) { await S.dataPending; if (!S || S.id !== sid) return; }
+  const m = newMetric('closing', null);
+  const line = makeLineStarter(sid, m, reply => S.history.push({ role: 'model', text: reply }));
   try {
     S.abort = new AbortController();
     const { data } = await callGemini({
@@ -1686,18 +2031,21 @@ async function doClosing() {
       contents: [...historyToContents(S.history), { role: 'user', parts: [{ text: "(Time's up. Say a short, natural, warm goodbye that fits our conversation — 1-2 sentences, no question.)" }] }],
       systemInstruction: S.systemInstruction,
       schema: CLOSING_SCHEMA,
-      thinking: 'low',
-      signal: S.abort.signal
+      thinking: chatThinking(),
+      signal: S.abort.signal,
+      meta: m,
+      stream: { onReply: line.show }
     });
-    reply = String(data?.reply || '').trim();
+    if (!S || S.id !== sid) return;
+    line.show(String(data?.reply || '').trim() || FALLBACK_CLOSINGS[S.stage]);
   } catch (e) {
-    if (isAbort(e)) return;
+    if (isAbort(e) || !S || S.id !== sid) return;
+    m.error = e.message;
+    m.tFull = performance.now();
+    line.show(FALLBACK_CLOSINGS[S.stage]);
   }
-  if (!S || S.id !== sid) return;
-  if (!reply) reply = FALLBACK_CLOSINGS[S.stage];
-  S.history.push({ role: 'model', text: reply });
-  appendAiBubble(reply);
-  await aiSpeak(reply);
+  maybeFinalizeMetric(m);
+  await line.speakP;
   if (!S || S.id !== sid) return;
   finishSession();
 }
@@ -1773,6 +2121,113 @@ function finishSession() {
 }
 
 // ===== [SECTION: HUD] =====
+
+// ---- 턴별 응답 시간 계측 (디버그 배지 + console.table) ----
+// t0: 입력 끝(전송/녹음 정지) · tUploaded: 오디오 업로드 완료 · tReply: 대사 문자열 완성 · tFull: 응답 전체(HUD) 완료
+// tTtsStart~tTtsReady: TTS 생성 · tPlay: 재생 명령 시점 (소리가 꺼져 있어도 동일)
+let metricSeq = 0;
+const METRIC_KIND = { opening: '첫 질문', turn: '턴', closing: '마무리' };
+const METRIC_INPUT = { audio: '🎙️ 녹음', stt: '⚡ 인식', keyboard: '⌨️ 키보드' };
+
+function newMetric(kind, inputType) {
+  return { id: ++metricSeq, kind, inputType, t0: performance.now(), attempts: [] };
+}
+function maybeFinalizeMetric(m) {
+  if (m && !m.done && m.tFull != null && (m.tPlay != null || m.speakEnded)) finalizeMetric(m);
+}
+function finalizeMetric(m) {
+  if (!m || m.done) return;
+  m.done = true;
+  runtime.metrics.push(m);
+  if (runtime.metrics.length > 50) runtime.metrics.shift();
+  console.table(runtime.metrics.slice(-10).map(metricRow));
+  renderDebugUI();
+}
+function metricParts(m) {
+  const base = m.prefetched ? m.t0 : (m.tUploaded ?? m.tReqStart ?? m.t0);
+  const d = (a, b) => (a != null && b != null ? Math.max(0, a - b) : null);
+  return {
+    upload: m.inputType === 'audio' ? d(m.tUploaded, m.t0) : null,
+    gemini: d(m.tReply, base),
+    hud: d(m.tFull, base),
+    tts: d(m.tTtsReady, m.tTtsStart),
+    total: d(m.tPlay, m.t0)
+  };
+}
+const msCell = v => (v == null ? '-' : Math.round(v));
+const secText = v => (v == null ? '-' : `${(v / 1000).toFixed(1)}s`);
+// 스트림만 끊기고 같은 모델 일반 요청으로 복구된 건 '방식' 열에 표시하고, 여기엔 모델/HTTP 실패만 남긴다
+const modelFailures = m => (m.attempts || []).filter(a => a.status !== 'stream');
+function metricFallbackText(m) {
+  const fails = modelFailures(m);
+  if (!fails.length) return '-';
+  return `${m.requested} → ${m.responder || '실패'} (${fails.map(a => `${a.model}:${a.status}`).join(', ')})`;
+}
+function metricMethod(m) {
+  if (m.prefetched) return '미리 준비';
+  if (m.streamed) return m.partial ? '스트림(부분)' : '스트림';
+  if (m.streamFallback) return `일반(스트림 실패:${m.streamFallback})`;
+  return '일반';
+}
+function metricRow(m) {
+  const p = metricParts(m);
+  return {
+    '#': m.id,
+    '종류': METRIC_KIND[m.kind] || m.kind,
+    '입력': METRIC_INPUT[m.inputType] || '-',
+    '업로드(ms)': msCell(p.upload),
+    'Gemini 대사(ms)': msCell(p.gemini),
+    'HUD 완료(ms)': msCell(p.hud),
+    'TTS 생성(ms)': msCell(p.tts),
+    '재생 시작·총(ms)': msCell(p.total),
+    '응답 모델': m.responder || '-',
+    '방식': metricMethod(m),
+    'TTS': m.ttsMode ? `${m.ttsMode}${m.ttsModel ? ` ${m.ttsModel}` : ''}` : '-',
+    '폴백': metricFallbackText(m),
+    'TTS 폴백': m.ttsFallback || '-',
+    '오류': m.error || '-'
+  };
+}
+function debugBadgeText(m) {
+  if (!m) return '⏱ 측정 대기 · 탭하면 표';
+  const p = metricParts(m);
+  const tts = m.ttsMode === 'browser' ? '브라우저' : secText(p.tts);
+  return `응답 ${secText(p.gemini)} · TTS ${tts} · 총 ${secText(p.total)} · ${m.responder || '-'}${modelFailures(m).length ? ' · ⚠폴백' : ''}${m.prefetched ? ' · 미리준비' : ''}${m.error ? ' · ❌' : ''}`;
+}
+function renderDebugUI() {
+  const wrap = $('#debugWrap');
+  if (!wrap) return;
+  const on = !!state.settings.showDebugTiming;
+  wrap.classList.toggle('hidden', !on);
+  $('#chatLog')?.classList.toggle('pt-12', on);
+  if (!on) return;
+  const last = runtime.metrics[runtime.metrics.length - 1];
+  const badge = $('#debugBadge');
+  if (badge) badge.textContent = debugBadgeText(last);
+  const panel = $('#debugPanel');
+  if (!panel) return;
+  panel.classList.toggle('hidden', !runtime.debugOpen);
+  if (!runtime.debugOpen) return;
+  const rows = runtime.metrics.slice(-10).reverse();
+  if (!rows.length) { panel.innerHTML = '<div class="text-slate-400 p-1">아직 측정된 턴이 없어요</div>'; return; }
+  const cols = ['#', '종류', '입력', '업로드', '대사', 'HUD', 'TTS', '총', '모델', '방식', '폴백'];
+  panel.innerHTML = `
+    <table class="border-collapse whitespace-nowrap">
+      <thead><tr>${cols.map(c => `<th class="text-left text-slate-400 font-normal px-1.5 py-1 border-b border-slate-700">${c}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(m => {
+        const p = metricParts(m);
+        const cells = [m.id, METRIC_KIND[m.kind] || m.kind, METRIC_INPUT[m.inputType] || '-', msCell(p.upload), msCell(p.gemini), msCell(p.hud),
+          m.ttsMode === 'browser' ? '브라우저' : msCell(p.tts), msCell(p.total), m.responder || '-', metricMethod(m), metricFallbackText(m)];
+        return `<tr class="${m.error ? 'text-rose-300' : 'text-slate-200'}">${cells.map(c => `<td class="px-1.5 py-1 border-b border-slate-800">${esc(c)}</td>`).join('')}</tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div class="text-slate-500 px-1.5 pt-1">단위 ms · 총 = 입력 끝 → 재생 명령 · 전체 기록은 console.table</div>`;
+}
+function toggleDebugPanel() {
+  runtime.debugOpen = !runtime.debugOpen;
+  renderDebugUI();
+}
+
 const payloads = new Map();
 let payloadSeq = 0;
 function regPayload(p) { const k = `p${++payloadSeq}`; payloads.set(k, p); return k; }
@@ -1794,6 +2249,7 @@ function hudCardHtml(turn, idx, animate) {
     ${h.upgrade ? `<div class="flex items-start gap-2 mt-1.5 text-emerald-300 font-medium"><span class="shrink-0">✨</span><span class="break-words">${esc(h.upgrade)}</span></div>` : ''}
     ${h.tipKo ? `<div class="flex items-start gap-2 mt-1.5 text-amber-100/90"><span class="shrink-0">💡</span><span class="break-words">${esc(h.tipKo)}</span></div>` : ''}
     ${turn.pron ? `<div class="flex items-start gap-2 mt-1.5 text-sky-300/90"><span class="shrink-0">🔊</span><span class="break-words">${esc(turn.pron)}</span></div>` : ''}
+    ${turn.hudMissing ? `<div class="mt-1.5 text-xs text-slate-500">⚠️ 스트림이 끊겨 이번 턴의 교정 정보를 받지 못했어요</div>` : ''}
     <div class="flex items-center justify-between gap-2 mt-2">
       <span class="text-[11px] text-slate-500">#${idx + 1} · ${esc(INPUT_MODES[turn.inputType === 'stt' ? 'browserStt' : turn.inputType === 'audio' ? 'record' : 'keyboard'].icon)}</span>
       ${h.upgrade ? dexSaveBtn({ type: 'hud', original: h.original || turn.transcript, native: h.upgrade, tipKo: h.tipKo, topicId: S?.topic.id || null }) : ''}
@@ -2030,7 +2486,7 @@ async function askSos() {
       contents: [{ role: 'user', parts: [{ text: `Conversation topic: "${S?.topic.title || 'free talk'}" (Stage ${S?.stage || state.settings.stage}).\nMy friend just said: "${lastAi}"\nWhat I want to say (Korean): ${q}` }] }],
       systemInstruction: SOS_SYSTEM,
       schema: SOS_SCHEMA,
-      thinking: 'low'
+      thinking: 'minimal'
     });
     const items = (Array.isArray(data?.expressions) ? data.expressions : []).filter(x => x && x.expression).slice(0, 3);
     if (!items.length) throw new Error('표현을 받지 못했어요');
@@ -2777,7 +3233,7 @@ function setupHtml(p) {
         ${toggleRow('autoStopOnSilence', '🤫 무음 2초 자동 전송', '녹음 모드에서 말이 끝나면 자동 전송')}
         ${toggleRow('excludeWaitTime', '⏸ AI 대기 시간 제외', 'AI 생성·음성 재생 중엔 타이머 정지')}
       </div>
-      <div class="text-xs text-slate-500">💬 회화 모델 <span class="font-mono text-slate-300">${esc(modelForRole(deep ? 'analysis' : 'chat'))}</span>${deep ? ' (딥토크: 분석 모델 사용)' : ''} · 🔊 ${esc(st.voiceName)}</div>
+      <div class="text-xs text-slate-500">💬 회화 모델 <span class="font-mono text-slate-300">${esc(modelForRole(deep ? 'analysis' : 'chat'))}</span>${deep ? ' (딥토크: 분석 모델 사용)' : ''} · 🔊 ${esc(TTS_PREFS[st.ttsPreference].label)}${st.ttsPreference !== 'browser' ? ` <span class="font-mono">${esc(modelForRole('tts'))}</span> · ${esc(st.voiceName)}` : ''}</div>
     </div>
 
     ${!getApiKey() ? `
@@ -2811,7 +3267,13 @@ function talkShellHtml() {
       <button data-action="replayLast" class="tap shrink-0 rounded-xl border border-slate-700 px-3 text-sm">🔁 다시 듣기</button>
       <button data-action="endSession" class="tap shrink-0 ml-auto rounded-xl border border-rose-500/50 bg-rose-500/10 text-rose-200 px-3 text-sm font-semibold">■ 대화 종료</button>
     </div>
-    <div id="chatLog" class="flex-1 min-h-0 overflow-y-auto scroll-thin px-3 md:px-5 py-4 space-y-3"></div>
+    <div class="relative flex-1 min-h-0">
+      <div id="chatLog" class="absolute inset-0 overflow-y-auto scroll-thin px-3 md:px-5 py-4 space-y-3"></div>
+      <div id="debugWrap" class="hidden absolute top-2 right-2 z-10 flex flex-col items-end gap-1 max-w-[calc(100%-1rem)]">
+        <button data-action="toggleDebugPanel" id="debugBadge" class="min-h-[32px] max-w-full truncate rounded-full border border-sky-500/40 bg-slate-950/90 backdrop-blur text-sky-200 text-[10px] font-mono px-2.5 shadow" title="탭하면 최근 10턴 단계별 시간"></button>
+        <div id="debugPanel" class="hidden max-w-full max-h-[45vh] overflow-auto scroll-thin rounded-xl border border-slate-700 bg-slate-950/95 backdrop-blur p-1.5 text-[10px] font-mono shadow-xl"></div>
+      </div>
+    </div>
     <div id="talkControls" class="shrink-0 border-t border-slate-800 bg-slate-900/80 px-3 md:px-5 py-2.5"></div>
     <div id="hudPanel" class="shrink-0 border-t border-emerald-500/30 bg-slate-950/95">
       <button data-action="toggleHud" class="w-full min-h-[40px] flex items-center justify-between px-3 md:px-5 py-1.5 text-sm">
@@ -2847,12 +3309,12 @@ function aiBubbleHtml(text, idx, animate) {
     </div>
   </div>`;
 }
-function userBubbleHtml(text, inputType, animate) {
+function userBubbleHtml(text, inputType, animate, idx, pending = false) {
   const icon = inputType === 'audio' ? '🎙️' : inputType === 'stt' ? '⚡' : '⌨️';
   return `
-  <div class="flex justify-end ${animate ? 'fade-in' : ''}">
+  <div class="flex justify-end ${animate ? 'fade-in' : ''}" data-log="${idx}">
     <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-2.5">
-      <p class="leading-relaxed break-words text-emerald-50">${esc(text)}</p>
+      <p class="user-text leading-relaxed break-words ${pending ? 'text-emerald-200/60 italic' : 'text-emerald-50'}">${esc(text)}</p>
       <div class="text-[11px] text-emerald-300/60 text-right mt-1">${icon} 나</div>
     </div>
   </div>`;
@@ -2861,7 +3323,7 @@ function renderChatLog() {
   const box = $('#chatLog');
   if (!box || !S) return;
   box.innerHTML = S.log.length
-    ? S.log.map((m, i) => (m.role === 'ai' ? aiBubbleHtml(m.text, i, false) : userBubbleHtml(m.text, m.inputType, false))).join('')
+    ? S.log.map((m, i) => (m.removed ? '' : m.role === 'ai' ? aiBubbleHtml(m.text, i, false) : userBubbleHtml(m.text, m.inputType, false, i, m.pending))).join('')
     : '';
   box.scrollTop = box.scrollHeight;
 }
@@ -2873,13 +3335,31 @@ function appendAiBubble(text) {
   box.insertAdjacentHTML('beforeend', aiBubbleHtml(text, S.log.length - 1, true));
   box.scrollTop = box.scrollHeight;
 }
-function appendUserBubble(text, inputType) {
-  if (!S) return;
-  S.log.push({ role: 'user', text, inputType });
+// 사용자 말풍선은 전송 즉시 띄운다 (녹음은 "전사 중…" 자리표시 → 전사 도착 시 갱신). 반환: log 인덱스
+function appendUserBubble(text, inputType, pending = false) {
+  if (!S) return -1;
+  S.log.push({ role: 'user', text, inputType, pending });
+  const idx = S.log.length - 1;
   const box = $('#chatLog');
-  if (!box) return;
-  box.insertAdjacentHTML('beforeend', userBubbleHtml(text, inputType, true));
-  box.scrollTop = box.scrollHeight;
+  if (box) {
+    box.insertAdjacentHTML('beforeend', userBubbleHtml(text, inputType, true, idx, pending));
+    box.scrollTop = box.scrollHeight;
+  }
+  return idx;
+}
+function updateUserBubble(idx, text) {
+  const entry = S?.log[idx];
+  if (!entry) return;
+  entry.text = text;
+  entry.pending = false;
+  const p = $(`#chatLog [data-log="${idx}"] .user-text`);
+  if (p) { p.textContent = text; p.className = 'user-text leading-relaxed break-words text-emerald-50'; }
+}
+function removeLogEntry(idx) {
+  const entry = S?.log[idx];
+  if (!entry) return;
+  entry.removed = true;
+  $(`#chatLog [data-log="${idx}"]`)?.remove();
 }
 function applySubtitles() {
   const hidden = !state.settings.showSubtitles;
@@ -2889,7 +3369,7 @@ function applySubtitles() {
   if (b) b.textContent = hidden ? '🙈 자막 OFF' : '💬 자막 ON';
 }
 function lastAiText() {
-  return [...(S?.log || [])].reverse().find(m => m.role === 'ai')?.text || '';
+  return [...(S?.log || [])].reverse().find(m => m.role === 'ai' && !m.removed)?.text || '';
 }
 
 function updateLevelMeter(level, elapsedMs) {
@@ -3110,6 +3590,7 @@ function renderTalk() {
     renderChatLog();
     renderHudList();
     renderControls();
+    renderDebugUI();
     updatePauseOverlay();
     updateMainScroll();
     return;
@@ -3245,7 +3726,8 @@ function settingsHtml() {
       </div>
       ${roleRow('chat', '💬 회화·HUD 모델', '빠른 응답 · thinking 낮게')}
       ${roleRow('analysis', '🧠 분석 모델', '리포트·토픽 생성·보스 평가 · thinking 높게')}
-      ${roleRow('tts', '🔊 음성(TTS) 모델', 'AI 대사 읽기')}
+      ${roleRow('tts', '🔊 TTS 속도 모델', '속도 우선 · 저지연 (기본)')}
+      ${roleRow('ttsQuality', '🔊 TTS 품질 모델', '품질 우선 선택 시 사용')}
       <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
         <div class="text-sm font-semibold">🛟 폴백 체인 <span class="text-[11px] text-slate-500 font-normal">429·5xx·404·미지원 시 순서대로 재시도 (쉼표/줄바꿈 구분)</span></div>
         <textarea data-change="fallbackChain" rows="3" class="mt-2 w-full rounded-lg bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2 font-mono text-sm" autocapitalize="off" spellcheck="false">${esc(m.fallbackChain.join('\n'))}</textarea>
@@ -3255,6 +3737,12 @@ function settingsHtml() {
 
     <section class="space-y-2">
       <h4 class="font-semibold">🔊 음성</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        ${Object.entries(TTS_PREFS).map(([k, v]) => `
+          <button data-action="setTtsPref" data-pref="${k}" class="tap text-left rounded-xl border px-3 py-2 ${st.ttsPreference === k ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/50'}">
+            <div class="text-sm font-semibold">${v.label}</div><div class="text-[11px] text-slate-400">${v.desc}</div>
+          </button>`).join('')}
+      </div>
       <div class="flex gap-2">
         <select data-change="setting" data-key="voiceName" class="${inputCls}">
           ${VOICES.map(v => `<option value="${v.name}" ${v.name === st.voiceName ? 'selected' : ''}>${v.name} — ${v.style}</option>`).join('')}
@@ -3268,6 +3756,7 @@ function settingsHtml() {
       <h4 class="font-semibold">🎙️ 회화</h4>
       ${toggleRow('excludeWaitTime', '⏸ AI 대기 시간 제외', 'AI 응답 생성·TTS 로딩/재생 중엔 타이머 정지')}
       ${toggleRow('autoStopOnSilence', '🤫 무음 2초 자동 전송', '녹음 모드에서 말이 끝나면 자동 종료')}
+      ${toggleRow('showDebugTiming', '⏱ 디버그 시간 표시', '대화 화면에 단계별 응답 시간 배지 (탭하면 최근 10턴 표)')}
     </section>
 
     <section class="space-y-2">
@@ -3331,6 +3820,13 @@ function applyPreset(preset) {
   saveState();
   renderHeader();
   rerenderSettings();
+}
+function setTtsPref(pref) {
+  if (!TTS_PREFS[pref]) return;
+  state.settings.ttsPreference = pref;
+  saveState();
+  rerenderSettings();
+  toast(`🔊 ${TTS_PREFS[pref].label}${pref === 'browser' ? '' : ` · ${modelForRole('tts')}`}`, 'success', 2000);
 }
 function previewVoice() {
   ensureAudioContext();
@@ -3407,6 +3903,7 @@ async function resetAll() {
   const ok = await showConfirm({ title: '🧨 전체 초기화', body: 'EXP·기록·도감·내 토픽·설정이 모두 지워져요. 되돌릴 수 없어요.\n(API 키는 유지돼요)', okText: '초기화', danger: true });
   if (!ok) return;
   if (S) abortSession();
+  discardPrefetch();
   state = defaultState();
   persistNow();
   clearPendingReport();
@@ -3428,6 +3925,7 @@ function onSettingChanged(key) {
   if (key === 'showSubtitles') applySubtitles();
   if (key === 'autoStopOnSilence' && S) renderControls();
   if (key === 'excludeWaitTime' && S) updateTimerUI();
+  if (key === 'showDebugTiming') renderDebugUI();
   if (!S && talk.pending && currentView === 'talk') renderTalk();
 }
 
@@ -3451,7 +3949,7 @@ const ACTIONS = {
   pickTopic: el => pickTopic(el.dataset.id),
   deleteCustomTopic: (el, e) => { e.stopPropagation(); return deleteCustomTopic(el.dataset.id); },
 
-  cancelSetup: () => { talk.pending = null; switchView('topics'); },
+  cancelSetup: () => { talk.pending = null; discardPrefetch(); switchView('topics'); },
   setTimer: el => { state.settings.timerPreset = Number(el.dataset.min); saveState(); renderTalk(); },
   setInputMode: el => {
     const mode = el.dataset.mode;
@@ -3474,6 +3972,8 @@ const ACTIONS = {
   revealSub: el => { if (!state.settings.showSubtitles) el.classList.toggle('blurred-sub'); },
   toggleSubtitles: () => { state.settings.showSubtitles = !state.settings.showSubtitles; saveState(); applySubtitles(); },
   toggleHud: () => toggleHud(),
+  toggleDebugPanel: () => toggleDebugPanel(),
+  setTtsPref: el => setTtsPref(el.dataset.pref),
   endSession: () => endSessionManual(),
   resumeBg: () => resumeFromBackground(),
 
