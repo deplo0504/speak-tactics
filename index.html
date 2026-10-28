@@ -1,0 +1,3628 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Speak Tactics">
+<meta name="theme-color" content="#020617">
+<title>Speak Tactics — 영어 스피킹 RPG</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  if (window.tailwind) {
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { gold: { 300: '#fde68a', 400: '#facc15', 500: '#eab308' } },
+          fontFamily: { sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'Apple SD Gothic Neo', 'Segoe UI', 'sans-serif'] }
+        }
+      }
+    };
+  }
+</script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+  html, body { height: 100%; margin: 0; background: #020617; overscroll-behavior: none; }
+  body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; color: #e2e8f0;
+    font-family: Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif; }
+  #app { height: 100vh; height: 100dvh; padding-left: var(--sal); padding-right: var(--sar); }
+  .pt-safe { padding-top: var(--sat); }
+  .pb-safe { padding-bottom: var(--sab); }
+  button, [role="button"], select, label { touch-action: manipulation; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  .tap { min-height: 44px; min-width: 44px; }
+  input, textarea, select { font-size: 16px; }
+  .grid-bg {
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(16,185,129,.10), transparent 40%),
+      radial-gradient(circle at 90% 10%, rgba(250,204,21,.06), transparent 35%),
+      linear-gradient(rgba(148,163,184,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,163,184,.04) 1px, transparent 1px);
+    background-size: auto, auto, 28px 28px, 28px 28px;
+  }
+  .fade-in { animation: fadeIn .5s ease-out both; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .toast-in { animation: toastIn .25s ease-out both; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
+  .glow-emerald { box-shadow: 0 0 0 1px rgba(16,185,129,.45), 0 0 26px rgba(16,185,129,.22); }
+  .glow-gold { box-shadow: 0 0 0 1px rgba(250,204,21,.5), 0 0 26px rgba(250,204,21,.22); }
+  .mic-live { animation: micPulse 1.3s ease-in-out infinite; }
+  @keyframes micPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(244,63,94,.55); } 50% { box-shadow: 0 0 0 16px rgba(244,63,94,0); } }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dots::after { content: ''; animation: dots 1.4s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+  .blurred-sub { filter: blur(7px); user-select: none; -webkit-user-select: none; }
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: #334155 transparent; -webkit-overflow-scrolling: touch; }
+  .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 9px; }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details[open] .chev { transform: rotate(180deg); }
+  .particle { position: fixed; z-index: 90; width: 9px; height: 9px; border-radius: 9999px; pointer-events: none;
+    background: radial-gradient(circle, #fef3c7 0%, #facc15 45%, #b45309 100%);
+    box-shadow: 0 0 10px rgba(250,204,21,.8); animation: burst 1.25s cubic-bezier(.15,.7,.3,1) forwards; }
+  @keyframes burst { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(.2); opacity: 0; } }
+  .score-ring { background: conic-gradient(#34d399 calc(var(--p) * 1%), #1e293b 0); }
+  .level-bar { transition: width .08s linear; }
+  .sheet-in { animation: sheetIn .25s ease-out both; }
+  @keyframes sheetIn { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  #cornerBadge { top: calc(var(--sat) + 60px); }
+  @media (min-width: 768px) { #cornerBadge { top: auto; bottom: 12px; } }
+  @media (max-width: 767px) { body.talk-live #cornerBadge { display: none; } }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+<div id="app" class="flex overflow-hidden grid-bg">
+  <aside id="sidebar" class="hidden md:flex md:flex-col w-60 shrink-0 border-r border-slate-800 bg-slate-900/60 pt-safe">
+    <div class="px-5 pt-5 pb-4">
+      <div class="flex items-center gap-2 text-xl font-black tracking-tight">
+        <span>⚔️</span><span class="text-emerald-300">Speak</span><span class="text-amber-300">Tactics</span>
+      </div>
+      <div class="text-[11px] text-slate-500 mt-1">택티컬 판타지 영어 스피킹 RPG</div>
+    </div>
+    <nav id="sideNav" class="flex flex-col gap-1 px-3"></nav>
+    <div class="mt-auto p-4 text-[11px] text-slate-500 leading-relaxed">Build 1/3 · 코어 회화 루프<br>대화 → 무음 HUD → 리포트 → 도감</div>
+  </aside>
+  <div class="flex-1 flex flex-col min-w-0 h-full">
+    <header id="header" class="pt-safe shrink-0 border-b border-slate-800 bg-slate-950/90 backdrop-blur z-30"></header>
+    <main id="main" class="flex-1 min-h-0 overflow-y-auto scroll-thin relative">
+      <section id="view-topics" class="hidden"></section>
+      <section id="view-talk" class="hidden h-full"></section>
+      <section id="view-dex" class="hidden"></section>
+      <section id="view-records" class="hidden"></section>
+    </main>
+    <nav id="tabbar" class="md:hidden shrink-0 border-t border-slate-800 bg-slate-950/95 backdrop-blur pb-safe grid grid-cols-4 z-30"></nav>
+  </div>
+</div>
+<div id="cornerBadge" class="fixed right-2 md:right-3 z-40 pointer-events-none hidden"></div>
+<div id="toastRoot" class="fixed z-[80] left-0 right-0 flex flex-col items-center gap-2 pointer-events-none px-3" style="top: calc(var(--sat) + 10px)"></div>
+<div id="modalRoot"></div>
+
+<script>
+'use strict';
+// ===== [SECTION: CONFIG] =====
+const APP_NAME = 'Speak Tactics';
+const STATE_VERSION = 1;
+const LS_STATE = 'rpg_state';
+const LS_SECRETS = 'rpg_secrets';
+const LS_MODEL_CACHE = 'rpg_model_cache';
+const LS_PENDING_REPORT = 'rpg_pending_report';
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const AI_STUDIO_URL = 'https://aistudio.google.com/apikey';
+const COOLDOWN_MS = 48 * 3600 * 1000;
+const TIMER_PRESETS = [3, 5, 10, 15, 0];
+const MAX_SESSIONS = 50;
+const SAVE_PREFIX = 'RPGSAVE1:';
+
+const DEFAULT_MODELS = {
+  chat: 'gemini-3.8-flash',
+  analysis: 'gemini-3.8-flash',
+  tts: 'gemini-3.8-flash-tts',
+  fallbackChain: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
+};
+// TTS 전용 폴백 (일반 폴백 체인은 텍스트 모델이라 TTS에 쓰지 않음)
+const TTS_FALLBACKS = ['gemini-2.5-flash-preview-tts'];
+// 모델 목록 조회 실패 시 드롭다운 기본값
+const DEFAULT_MODEL_OPTIONS = [
+  'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite',
+  'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+  'gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts'
+];
+// 무료 등급에서 사용 불가하거나 과금될 수 있는 모델 패턴
+const PAID_MODEL_PATTERNS = [/argon/i, /gemini-4/i, /3\.1-pro/i, /pro-preview/i, /ultra/i];
+const HYBRID_ANALYSIS_FALLBACK = 'gemini-2.5-pro';
+
+// 공식 문서의 prebuilt voice 목록
+const VOICES = [
+  ['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm'], ['Fenrir', 'Excitable'],
+  ['Leda', 'Youthful'], ['Orus', 'Firm'], ['Aoede', 'Breezy'], ['Callirrhoe', 'Easy-going'], ['Autonoe', 'Bright'],
+  ['Enceladus', 'Breathy'], ['Iapetus', 'Clear'], ['Umbriel', 'Easy-going'], ['Algieba', 'Smooth'], ['Despina', 'Smooth'],
+  ['Erinome', 'Clear'], ['Algenib', 'Gravelly'], ['Rasalgethi', 'Informative'], ['Laomedeia', 'Upbeat'], ['Achernar', 'Soft'],
+  ['Alnilam', 'Firm'], ['Schedar', 'Even'], ['Gacrux', 'Mature'], ['Pulcherrima', 'Forward'], ['Achird', 'Friendly'],
+  ['Zubenelgenubi', 'Casual'], ['Vindemiatrix', 'Gentle'], ['Sadachbia', 'Lively'], ['Sadaltager', 'Knowledgeable'], ['Sulafat', 'Warm']
+].map(([name, style]) => ({ name, style }));
+const DEFAULT_VOICE = 'Puck';
+
+const STAGES = {
+  1: { label: 'Stage 1', icon: '🛡️', name: '스피킹 재활 & 순발력 복구', goal: '현재 AM 180점 유지·안정화',
+       desc: '친절하고 명확한 미군 동료 톤. 3초 안에 입 밖으로 꺼내기, 기본 구동사와 시제 정확도.',
+       persona: 'Mike, a friendly, clear-speaking US Army sergeant',
+       style: 'Friendly, clear US Army coworker tone. Use simple, clear sentences at a moderate pace so the user can start answering within 3 seconds. Create natural chances to use basic phrasal verbs and accurate tenses (past, present perfect, future).' },
+  2: { label: 'Stage 2', icon: '🍺', name: '카투사 한계 돌파: 슬랭 & 리얼 토크', goal: '목표 OPIc AL',
+       desc: '배럭스·펍에서 미군끼리 빠르게 말하는 캐주얼 톤. 축약어, 실전 슬랭, 맞장구, 스토리텔링.',
+       persona: 'Jay, a laid-back US soldier buddy from the barracks',
+       style: "Fast, casual tone like US soldiers chatting in the barracks or at a pub. Use contractions (gonna, wanna, y'know), real everyday slang, natural backchannels (no way, for real?, that's wild) and pull full stories out of the user." },
+  3: { label: 'Stage 3', icon: '⚖️', name: '논리적 변증', goal: '목표 토스 AM 190점',
+       desc: '근거를 대고, "왜? 반대로 보면?" 같은 반문에 막힘없이 답하기.',
+       persona: 'Sam, a sharp friend who loves a good debate',
+       style: 'Logical, dialectical conversation. Ask for reasons and concrete examples, and challenge with "why?", "but what about...?" or "flip it around" so the user practices defending a view without stalling.' },
+  4: { label: 'Stage 4', icon: '👑', name: '네이티브 마스터', goal: '목표 토스 AH 200점',
+       desc: '원어민 100% 속도, 비유·유머·외교적 화법, 미세한 어색함까지 다룸.',
+       persona: 'Alex, a witty native speaker who talks at full speed',
+       style: 'Full native speed and phrasing, idioms, metaphors, light humor and diplomatic hedging. Treat the user as a near-native peer.' }
+};
+
+const TRACKS = {
+  1: { emoji: '🏠', name: 'My Life, Routine & Personal Stories', nameKo: '내 일상 말하기', tag: '핵심 · 35%', core: true,
+       concept: "A curious foreign friend or coworker asks concretely about the user's daily patterns, habits, tastes and recent experiences, and keeps asking follow-up questions." },
+  2: { emoji: '💭', name: 'What Do You Think? Everyday Opinions', nameKo: '내 생각 말하기', tag: '핵심 · 35%', core: true,
+       concept: '"What do you think?" / "What would you pick?" — the user states a personal opinion with clear, well-organized reasons.' },
+  3: { emoji: '🇺🇸', name: 'Bro Vibes & Daily Situations', nameKo: '브로 토크 & 생활 상황', tag: '서브 · 15%', core: false,
+       concept: 'Casual bro-to-bro talk and real-life situations. For situational topics (plan changes, complaints, clinic) naturally play the matching role (friend, staff, pharmacist, doctor).' },
+  4: { emoji: '🏛️', name: 'Politics & Diplomacy', nameKo: '정치 & 외교', tag: '스페셜 · 15%', core: false,
+       concept: "Light but thoughtful talk about politics and diplomacy. Stay strictly non-partisan, lay out the strongest arguments on each side, and draw out the user's own view and reasoning." }
+};
+const CUSTOM_TRACK = { emoji: '✍️', name: 'Free Talk', nameKo: '직접 입력', tag: '자유',
+  concept: 'Free talk about something the user brought up themselves (it may be written in Korean — always talk in English). Chat about it like a friend catching up: what happened, the details, how it felt, what comes next.' };
+
+const INPUT_MODES = {
+  record: { icon: '🎙️', label: '녹음 전송', desc: '녹음 → Gemini가 직접 듣고 발음까지 평가 (아이폰 권장)' },
+  browserStt: { icon: '⚡', label: '브라우저 음성 인식', desc: '브라우저가 받아쓴 텍스트만 전송 · 발음 평가 불가' },
+  keyboard: { icon: '⌨️', label: '키보드', desc: '마이크가 안 될 때 타이핑으로 대화' }
+};
+
+const SILENCE = { threshold: 0.02, holdMs: 2000, maxRecordMs: 120000 };
+
+const FALLBACK_CLOSINGS = {
+  1: "Alright, that's time! Great talking with you — let's do this again soon.",
+  2: "Ah man, we're outta time! Good stuff, bro — catch you later.",
+  3: "And that's time. Good arguments today — let's pick this up again soon.",
+  4: "Well, that's a wrap! Seriously enjoyed this one — until next time."
+};
+
+// 공용 유틸
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const uniq = arr => [...new Set(arr)];
+const clampInt = (v, min, max, def) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
+const uid = (p = 'id') => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const pad2 = n => String(n).padStart(2, '0');
+const fmtDate = ts => { const d = new Date(ts); return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const fmtClock = (ms, ceil = false) => { const s = Math.max(0, ceil ? Math.ceil(ms / 1000) : Math.floor(ms / 1000)); return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`; };
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+  });
+}
+const isAbort = e => e && (e.name === 'AbortError');
+const isPaidModel = id => PAID_MODEL_PATTERNS.some(re => re.test(id || ''));
+const normalizeModelId = id => String(id || '').trim().replace(/^models\//, '');
+
+// ===== [SECTION: STATE] =====
+let state = null;
+let saveTimer = null;
+
+function defaultSettings() {
+  return {
+    stage: 1,
+    timerPreset: 5,
+    excludeWaitTime: true,
+    inputMode: 'record',
+    autoStopOnSilence: true,
+    showSubtitles: true,
+    voiceName: DEFAULT_VOICE,
+    models: { chat: DEFAULT_MODELS.chat, analysis: DEFAULT_MODELS.analysis, tts: DEFAULT_MODELS.tts, fallbackChain: [...DEFAULT_MODELS.fallbackChain] },
+    useAnalysisModelForDeepTalk: false,
+    onlyCoreTracksInRandom: false
+  };
+}
+
+function defaultState() {
+  return {
+    version: STATE_VERSION,
+    meta: { updatedAt: Date.now(), deviceId: uid('dev') },
+    settings: defaultSettings(),
+    profile: {
+      exp: 0, level: 1, rankStage: 1,
+      stats: { fluency: 60, vocab: 60, grammar: 60, logic: 60, nuance: 60 },
+      pendingBoss: null, bossHistory: []
+    },
+    topicProgress: {},
+    customTopics: [],
+    dex: [],
+    sessions: []
+  };
+}
+
+function emptyProgress() {
+  return { clearCount: 0, lastClearedAt: null, summaries: [], anglesCovered: [] };
+}
+
+function normalizeKeyExpr(k) {
+  if (typeof k === 'string') { const [en, ko] = k.split(/\s*[—–|]\s*/); return { en: (en || '').trim(), ko: (ko || '').trim() }; }
+  if (isObj(k)) return { en: String(k.en ?? k.expression ?? '').trim(), ko: String(k.ko ?? k.meaningKo ?? '').trim() };
+  return { en: '', ko: '' };
+}
+
+function normalizeTopic(t, source = 'custom') {
+  return {
+    id: String(t.id),
+    track: clampInt(t.track, 1, 4, 1),
+    title: String(t.title || 'Untitled'),
+    titleKo: String(t.titleKo || t.title || ''),
+    subtitle: String(t.subtitle || ''),
+    starterQuestions: (Array.isArray(t.starterQuestions) ? t.starterQuestions : []).map(String).filter(Boolean).slice(0, 3),
+    keyExpressions: (Array.isArray(t.keyExpressions) ? t.keyExpressions : []).map(normalizeKeyExpr).filter(k => k.en).slice(0, 4),
+    createdAt: Number(t.createdAt) || Date.now(),
+    source: t.source === 'ai' ? 'ai' : source
+  };
+}
+
+function migrateState(raw) {
+  const d = defaultState();
+  if (!isObj(raw)) return d;
+  const s = { ...d, ...raw, version: STATE_VERSION };
+
+  s.meta = { ...d.meta, ...(isObj(raw.meta) ? raw.meta : {}) };
+  if (!s.meta.deviceId) s.meta.deviceId = d.meta.deviceId;
+
+  const rs = isObj(raw.settings) ? raw.settings : {};
+  const st = { ...d.settings, ...rs };
+  st.models = { ...d.settings.models, ...(isObj(rs.models) ? rs.models : {}) };
+  for (const r of ['chat', 'analysis', 'tts']) st.models[r] = normalizeModelId(st.models[r]) || DEFAULT_MODELS[r];
+  st.models.fallbackChain = (Array.isArray(st.models.fallbackChain) ? st.models.fallbackChain : []).map(normalizeModelId).filter(Boolean);
+  if (!st.models.fallbackChain.length) st.models.fallbackChain = [...DEFAULT_MODELS.fallbackChain];
+  st.stage = clampInt(st.stage, 1, 4, 1);
+  st.timerPreset = TIMER_PRESETS.includes(Number(st.timerPreset)) ? Number(st.timerPreset) : 5;
+  if (!INPUT_MODES[st.inputMode]) st.inputMode = 'record';
+  for (const k of ['excludeWaitTime', 'autoStopOnSilence', 'showSubtitles', 'useAnalysisModelForDeepTalk', 'onlyCoreTracksInRandom']) {
+    if (typeof st[k] !== 'boolean') st[k] = d.settings[k];
+  }
+  if (!VOICES.some(v => v.name === st.voiceName)) st.voiceName = DEFAULT_VOICE;
+  s.settings = st;
+
+  const rp = isObj(raw.profile) ? raw.profile : {};
+  const p = { ...d.profile, ...rp };
+  p.stats = { ...d.profile.stats, ...(isObj(rp.stats) ? rp.stats : {}) };
+  p.exp = Math.max(0, Math.round(Number(p.exp) || 0));
+  p.level = Math.max(1, Math.round(Number(p.level) || 1));
+  p.rankStage = clampInt(p.rankStage, 1, 4, 1);
+  if (!Array.isArray(p.bossHistory)) p.bossHistory = [];
+  if (p.pendingBoss === undefined) p.pendingBoss = null;
+  s.profile = p;
+
+  s.topicProgress = {};
+  if (isObj(raw.topicProgress)) {
+    for (const [k, v] of Object.entries(raw.topicProgress)) {
+      if (!isObj(v)) continue;
+      s.topicProgress[k] = {
+        clearCount: Math.max(0, Math.round(Number(v.clearCount) || 0)),
+        lastClearedAt: Number(v.lastClearedAt) || null,
+        summaries: (Array.isArray(v.summaries) ? v.summaries : []).map(String).slice(-5),
+        anglesCovered: (Array.isArray(v.anglesCovered) ? v.anglesCovered : []).map(String)
+      };
+    }
+  }
+
+  s.customTopics = (Array.isArray(raw.customTopics) ? raw.customTopics : [])
+    .filter(t => isObj(t) && t.id && t.title).map(t => normalizeTopic(t, 'custom'));
+
+  s.dex = (Array.isArray(raw.dex) ? raw.dex : []).filter(x => isObj(x) && x.id).map(x => ({
+    id: String(x.id),
+    type: ['hud', 'sos', 'report'].includes(x.type) ? x.type : 'hud',
+    original: String(x.original ?? ''),
+    native: String(x.native ?? ''),
+    tipKo: String(x.tipKo ?? ''),
+    topicId: x.topicId ?? null,
+    createdAt: Number(x.createdAt) || Date.now(),
+    box: Math.max(1, Math.round(Number(x.box) || 1)),
+    lastReviewedAt: Number(x.lastReviewedAt) || null,
+    reviewCount: Math.max(0, Math.round(Number(x.reviewCount) || 0))
+  }));
+
+  s.sessions = (Array.isArray(raw.sessions) ? raw.sessions : []).filter(x => isObj(x) && x.id)
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, MAX_SESSIONS);
+  return s;
+}
+
+function loadState() {
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); }
+  catch (e) { console.warn('state parse failed', e); setTimeout(() => toast('저장 데이터를 읽지 못해 기본값으로 시작해요', 'warn'), 300); }
+  state = migrateState(raw);
+}
+
+// 변경 후 500ms 디바운스 저장
+function saveState() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persistNow, 500);
+}
+function persistNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!state) return;
+  state.meta.updatedAt = Date.now();
+  try { localStorage.setItem(LS_STATE, JSON.stringify(state)); }
+  catch (e) { console.error(e); toastOnce('persist-fail', '브라우저 저장소에 저장하지 못했어요 (저장 공간 부족 또는 개인정보 보호 모드)', 'error', 60000); }
+}
+
+// 비밀값은 rpg_secrets 에만 저장한다
+function getSecrets() {
+  try { const v = JSON.parse(localStorage.getItem(LS_SECRETS) || '{}'); return isObj(v) ? v : {}; } catch { return {}; }
+}
+function setSecret(key, value) {
+  const s = getSecrets();
+  if (value) s[key] = value; else delete s[key];
+  try { localStorage.setItem(LS_SECRETS, JSON.stringify(s)); } catch (e) { toast('API 키를 저장하지 못했어요', 'error'); }
+}
+const getApiKey = () => String(getSecrets().geminiApiKey || '').trim();
+
+// 내보내기용 사본: 비밀값 키를 명시적으로 제거한다 (세이브 코드·내보내기·클라우드 동기화 공통)
+function exportState() {
+  const copy = JSON.parse(JSON.stringify(state));
+  for (const k of ['secrets', 'rpg_secrets', 'apiKey', 'geminiApiKey', 'firebaseToken', 'authToken']) delete copy[k];
+  if (copy.settings) for (const k of ['apiKey', 'geminiApiKey', 'firebaseToken']) delete copy.settings[k];
+  return copy;
+}
+
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function base64ToUtf8(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function makeSaveCode() {
+  return SAVE_PREFIX + utf8ToBase64(JSON.stringify(exportState()));
+}
+function parseSaveCode(code) {
+  let s = String(code || '').replace(/\s+/g, '');
+  if (!s) throw new Error('세이브 코드를 붙여넣어 주세요');
+  if (s.startsWith(SAVE_PREFIX)) s = s.slice(SAVE_PREFIX.length);
+  let obj;
+  try { obj = JSON.parse(base64ToUtf8(s)); } catch { throw new Error('세이브 코드 형식이 올바르지 않아요 (일부만 복사됐는지 확인)'); }
+  if (!isObj(obj) || typeof obj.version !== 'number' || !isObj(obj.settings)) throw new Error('이 앱의 세이브 코드가 아니에요');
+  if (obj.version > STATE_VERSION) throw new Error('더 최신 버전 앱에서 만든 세이브 코드예요');
+  for (const k of ['secrets', 'rpg_secrets', 'apiKey', 'geminiApiKey']) delete obj[k];
+  return migrateState(obj);
+}
+
+// 합치기: dex·customTopics = id 합집합, topicProgress = clearCount 큰 쪽, profile.exp = 큰 쪽
+function mergeStates(local, incoming) {
+  const out = JSON.parse(JSON.stringify(local));
+  const dexMap = new Map(out.dex.map(d => [d.id, d]));
+  for (const d of incoming.dex) {
+    const cur = dexMap.get(d.id);
+    if (!cur || (d.reviewCount || 0) > (cur.reviewCount || 0)) dexMap.set(d.id, d);
+  }
+  out.dex = [...dexMap.values()].sort((a, b) => b.createdAt - a.createdAt);
+
+  const topicMap = new Map(out.customTopics.map(t => [t.id, t]));
+  for (const t of incoming.customTopics) if (!topicMap.has(t.id)) topicMap.set(t.id, t);
+  out.customTopics = [...topicMap.values()];
+
+  for (const [id, inc] of Object.entries(incoming.topicProgress)) {
+    const cur = out.topicProgress[id];
+    if (!cur || inc.clearCount > cur.clearCount || (inc.clearCount === cur.clearCount && (inc.lastClearedAt || 0) > (cur.lastClearedAt || 0))) {
+      out.topicProgress[id] = inc;
+    }
+  }
+
+  if (incoming.profile.exp > out.profile.exp) out.profile = incoming.profile;
+
+  const sesMap = new Map(out.sessions.map(x => [x.id, x]));
+  for (const x of incoming.sessions) if (!sesMap.has(x.id)) sesMap.set(x.id, x);
+  out.sessions = [...sesMap.values()].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, MAX_SESSIONS);
+  return migrateState(out);
+}
+
+function savePendingReport(draft) {
+  try { localStorage.setItem(LS_PENDING_REPORT, JSON.stringify(draft)); } catch (e) { console.warn(e); }
+}
+function loadPendingReport() {
+  try { const d = JSON.parse(localStorage.getItem(LS_PENDING_REPORT) || 'null'); return isObj(d) && d.id && Array.isArray(d.turns) ? d : null; } catch { return null; }
+}
+function clearPendingReport() {
+  try { localStorage.removeItem(LS_PENDING_REPORT); } catch {}
+}
+
+// ===== [SECTION: TOPICS_DATA] =====
+// T(id, track, title, titleKo, subtitle, starterQuestions[3], keyExpressions[4] = [영어, 한국어 뜻])
+const T = (id, track, title, titleKo, subtitle, starterQuestions, keyExpressions) => ({
+  id, track, title, titleKo, subtitle, starterQuestions,
+  keyExpressions: keyExpressions.map(([en, ko]) => ({ en, ko })), source: 'seed'
+});
+
+const SEED_TOPICS = [
+  // 🏠 Track 1 — My Life, Routine & Personal Stories
+  T('t1_routine', 1, 'Weekday vs Weekend Routine', '평일 vs 주말 루틴', '평일 일과와 주말 루틴 비교',
+    ['Walk me through a typical weekday for you — what does your morning look like?',
+     'How are your weekends different from your weekdays?',
+     "What's one part of your daily routine you'd never skip?"],
+    [['I usually start my day by ~', '보통 ~하면서 하루를 시작해'], ['On weekends, I tend to sleep in', '주말엔 늦잠 자는 편이야'],
+     ["It's pretty much the same every day", '매일 거의 똑같아'], ['I try to squeeze in some time for ~', '~할 시간을 짬 내서 만들려고 해']]),
+  T('t1_workout', 1, 'Workout & Diet Habits', '운동 & 식단 습관', '헬스·운동 루틴과 식단·체중 관리',
+    ['Do you work out regularly? What does your usual routine look like?',
+     'How do you manage your diet — are you pretty strict about it?',
+     'What got you into working out in the first place?'],
+    [['I hit the gym ~ times a week', '일주일에 ~번 헬스장 가'], ["I'm trying to cut down on carbs", '탄수화물 줄이려고 하는 중이야'],
+     ["I've been bulking / cutting lately", '요즘 벌크업 / 커팅 중이야'], ['I fell off the wagon', '(다짐했던 걸) 결국 무너뜨렸어']]),
+  T('t1_hobbies', 1, 'Current Hobbies & Pastimes', '요즘 빠진 취미', '요즘 푹 빠진 취미와 여가 시간 활용',
+    ["What have you been really into lately in your free time?",
+     'How did you get into that hobby?',
+     'If you had a completely free day tomorrow, how would you spend it?'],
+    [["I've been really into ~ lately", '요즘 ~에 푹 빠졌어'], ['I picked it up a few months ago', '몇 달 전에 시작했어'],
+     ['It helps me unwind', '긴장 푸는 데 도움이 돼'], ['I lose track of time when I ~', '~하면 시간 가는 줄 몰라']]),
+  T('t1_sleep', 1, 'Sleep & Energy Management', '수면 & 컨디션 관리', '수면 습관, 피로 회복, 컨디션 관리',
+    ['How many hours of sleep do you usually get on a weeknight?',
+     'Are you more of a morning person or a night owl?',
+     'What do you do when you feel completely drained?'],
+    [["I'm a night owl", '난 올빼미형이야'], ['I toss and turn a lot', '자다가 자주 뒤척여'],
+     ['I need to recharge my batteries', '재충전이 필요해'], ['I crash early when I’m exhausted', '너무 피곤하면 일찍 뻗어']]),
+  T('t1_spending', 1, 'Spending Habits & Best Purchases', '소비 습관 & 인생템', '소비 습관과 최근 가장 만족한 쇼핑',
+    ["What's the best thing you've bought recently?",
+     'Would you say you’re more of a saver or a spender?',
+     'What do you usually splurge on without feeling guilty?'],
+    [['It was totally worth every penny', '돈이 하나도 안 아까웠어'], ["I'm trying to stick to a budget", '예산 안에서 쓰려고 노력 중이야'],
+     ['I splurged on ~', '~에 큰맘 먹고 돈 썼어'], ['It was an impulse buy', '충동구매였어']]),
+  T('t1_food', 1, 'Food Preferences & Cooking', '음식 취향 & 요리', '좋아하는 음식, 단골 맛집, 요리 경험',
+    ["What's your go-to comfort food?",
+     "Is there a restaurant you keep going back to? What's so good about it?",
+     "Do you cook much at home? What's your signature dish?"],
+    [["That's my go-to spot", '거기가 내 단골집이야'], ['It really hits the spot', '딱 원하던 맛이야'],
+     ["I'm not much of a cook", '요리를 잘하는 편은 아니야'], ['I could eat that every single day', '매일 먹어도 안 질려']]),
+  T('t1_living', 1, 'Living Space & Chores', '내 공간 & 집안일', '내 방·집 공간 스타일과 집안일 루틴',
+    ["Describe your room or your place — what's it like?",
+     'Which household chore do you hate the most, and why?',
+     'If you could change one thing about where you live, what would it be?'],
+    [["It's pretty cozy but a bit cramped", '아늑한데 좀 비좁아'], ['I do the laundry once a week', '빨래는 일주일에 한 번 해'],
+     ['Clutter drives me crazy', '어질러진 거 보면 미칠 것 같아'], ['I keep putting it off', '자꾸 미루게 돼']]),
+  T('t1_friends', 1, 'Friends & Socializing', '친구 & 인간관계', '친한 친구들과의 만남 스타일과 인간관계',
+    ['Tell me about your closest friends — how did you guys meet?',
+     'What do you usually do when you hang out together?',
+     'Do you prefer big gatherings or small get-togethers?'],
+    [['We go way back', '우린 오래된 사이야'], ['We just hang out and catch up', '그냥 만나서 근황 얘기해'],
+     ["I'm more of a one-on-one person", '난 일대일로 만나는 게 더 좋아'], ['We kind of drifted apart', '사이가 좀 멀어졌어']]),
+  T('t1_trips', 1, 'Memorable Trips & Vacations', '기억에 남는 여행', '가장 기억에 남는 여행지와 휴가 에피소드',
+    ["What's the most memorable trip you've ever taken?",
+     'Did anything go wrong on that trip?',
+     'Where do you want to go next, and why there?'],
+    [['It was the trip of a lifetime', '인생 여행이었어'], ["Things didn't go as planned", '계획대로 안 됐어'],
+     ["I'd love to go back someday", '언젠가 꼭 다시 가고 싶어'], ['We ended up ~ing', '결국 ~하게 됐어']]),
+  T('t1_katusa', 1, 'KATUSA Memories & Army Life', '카투사 시절 추억', '카투사 복무 시절 추억과 재미있던 일화',
+    ['So you served as a KATUSA — what was a normal day like for you?',
+     "What's the funniest thing that happened while you were serving?",
+     'What was the hardest part of army life for you?'],
+    [['Back when I was in the army, ~', '군대에 있을 때는 ~'], ['We used to ~ every Friday', '금요일마다 ~하곤 했어'],
+     ['It was a real culture shock', '진짜 문화 충격이었어'], ['I learned to roll with the punches', '힘든 일에도 유연하게 버티는 법을 배웠어']]),
+  T('t1_stress', 1, 'Stress Relief & Mental Care', '스트레스 해소 & 멘탈 관리', '나만의 스트레스 해소법과 멘탈 관리',
+    ['What do you usually do to blow off steam?',
+     'What stresses you out the most these days?',
+     'How do you know when you really need a break?'],
+    [['I blow off steam by ~ing', '~하면서 스트레스를 풀어'], ["I've been under a lot of pressure", '요즘 압박을 많이 받고 있어'],
+     ['I try not to dwell on it', '그 일에 너무 매달리지 않으려 해'], ['It takes my mind off things', '잡생각을 잊게 해줘']]),
+  T('t1_goals', 1, 'Recent Interests & Personal Goals', '요즘 관심사 & 올해 목표', '요즘 최대 관심사와 올해 개인 목표',
+    ["What's been on your mind the most these days?",
+     "What's one goal you really want to hit this year?",
+     "What's your game plan to actually make it happen?"],
+    [['My main goal this year is to ~', '올해 내 주요 목표는 ~야'], ["I've been working toward ~", '~를 목표로 노력해 왔어'],
+     ['I want to get better at ~', '~를 더 잘하고 싶어'], ["I'm on track / falling behind", '계획대로 가는 중이야 / 뒤처지고 있어']]),
+
+  // 💭 Track 2 — What Do You Think? Everyday Opinions
+  T('t2_friendship', 2, 'Friendship Standards & Boundaries', '진짜 친구 & 손절 기준', "진짜 친구의 조건과 '손절'의 기준",
+    ['What makes someone a true friend, in your opinion?',
+     'Have you ever had to cut someone off? What was the last straw?',
+     "Do you think friendships just fade naturally, or is it usually someone's fault?"],
+    [['That was the last straw', '그게 결정타였어'], ['I had to cut them off', '그 사람이랑 손절해야 했어'],
+     ['A real friend has your back', '진짜 친구는 내 편이 되어 줘'], ["It's a two-way street", '서로 노력해야 하는 거야']]),
+  T('t2_saving', 2, 'Saving vs Spending', '저축 vs 소비', '미래를 위한 저축·투자 vs 현재의 행복을 위한 소비',
+    ['Do you think it’s smarter to save for the future or enjoy your money now?',
+     "What's your take on the YOLO lifestyle?",
+     'If you suddenly got ten million won, what would you do with it?'],
+    [["I'd rather ~ than ~", '~하느니 차라리 ~하겠어'], ["It's all about balance", '결국 균형이 중요해'],
+     ['Many people live paycheck to paycheck', '많은 사람들이 월급으로 겨우 살아'], ['In the long run, ~', '장기적으로 보면 ~']]),
+  T('t2_worklife', 2, 'Work-Life Balance & Career Values', '워라밸 & 직업관', '이상적인 워라밸과 직업 선택 기준',
+    ['What matters most to you when choosing a job — money, people, or growth?',
+     'Would you take a much higher salary if it meant way longer hours?',
+     'What does a good work-life balance actually look like to you?'],
+    [['At the end of the day, ~', '결국에는 ~'], ["It's not worth burning out over", '번아웃 될 만큼의 가치는 없어'],
+     ['I care a lot about career growth', '커리어 성장을 많이 신경 써'], ['You have to draw a line between work and life', '일과 삶 사이에 선을 그어야 해']]),
+  T('t2_dating', 2, 'Dating, Marriage & Single Life', '연애·결혼·비혼', '연애·결혼·혼자 사는 삶에 대한 생각',
+    ['Why do you think more people are choosing to stay single these days?',
+     "What's the most important thing in a long-term relationship?",
+     'Do you think marriage is still necessary nowadays?'],
+    [['settle down', '정착하다 (결혼해서 자리 잡다)'], ['It really depends on the person', '사람마다 정말 달라'],
+     ["That's a deal-breaker for me", '그건 나한테 절대 안 되는 조건이야'], ["There's a lot of pressure to ~", '~하라는 압박이 커']]),
+  T('t2_shortform', 2, 'Short-form Media & SNS Impact', '숏폼 & SNS의 영향', '숏폼과 SNS가 삶에 미치는 영향',
+    ['How much time would you say you spend on short-form videos a day?',
+     'Do you think social media makes people happier or more miserable?',
+     'Should there be limits on how much kids use social media?'],
+    [['I just mindlessly scroll', '아무 생각 없이 스크롤만 해'], ['It shortens our attention span', '집중력을 짧게 만들어'],
+     ["It's a double-edged sword", '양날의 검이야'], ['People constantly compare themselves to others', '사람들이 계속 남과 비교해']]),
+  T('t2_ai', 2, 'AI in Daily Life', '일상 속 AI', 'AI 발전이 일상과 일자리에 가져올 변화',
+    ['How do you actually use AI in your daily life right now?',
+     'Do you think AI will take away more jobs than it creates?',
+     'Is there anything you think AI should never be allowed to do?'],
+    [["It's a total game changer", '완전히 판도를 바꾸는 거야'], ['It could replace human workers', '사람 일자리를 대체할 수 있어'],
+     ["I'm a bit skeptical about ~", '~에 대해선 좀 회의적이야'], ['We have to keep up with the changes', '변화를 따라가야 해']]),
+  T('t2_korea', 2, 'Pros & Cons of Living in Korea', '한국 생활의 장단점', '외국인 친구에게 설명하는 한국 사회의 매력과 아쉬운 점',
+    ["If a foreign friend asked you, what's the best part of living in Korea?",
+     "What's something about Korean society you wish would change?",
+     'Would you ever consider living abroad long-term? Why or why not?'],
+    [['What I love about Korea is ~', '한국에서 내가 좋아하는 건 ~야'], ["It's a really fast-paced lifestyle", '정말 빠르게 돌아가는 생활이야'],
+     ['The downside is ~', '아쉬운 점은 ~야'], ["Everything's super convenient", '모든 게 엄청 편리해']]),
+  T('t2_remote', 2, 'Remote Work vs Office Culture', '재택 vs 출근', '재택·혼자 일하기 vs 출근·팀워크',
+    ['Would you rather work from home or go into the office? Why?',
+     'What do you think people lose when they work fully remotely?',
+     'Do you work better alone or as part of a team?'],
+    [["I'm way more productive when ~", '~할 때 훨씬 생산적이야'], ['Nothing beats face-to-face interaction', '대면 소통을 이길 건 없어'],
+     ['The commute is killing me', '출퇴근 때문에 죽겠어'], ["It's easy to get distracted at home", '집에선 산만해지기 쉬워']]),
+  T('t2_leaders', 2, 'Good Leaders vs Toxic Coworkers', '좋은 리더 vs 최악의 동료', '좋은 리더·선임과 최악의 동료 유형',
+    ['What makes a good leader in your eyes?',
+     'Have you ever dealt with a toxic coworker or senior? What happened?',
+     "How do you usually handle people you can't stand at work?"],
+    [['A good leader leads by example', '좋은 리더는 솔선수범해'], ['He threw me under the bus', '그 사람이 나를 희생양 삼았어'],
+     ['My boss used to micromanage everything', '상사가 사사건건 간섭했어'], ['I just keep it professional', '그냥 업무적으로만 대해']]),
+  T('t2_talent', 2, 'Talent & Luck vs Hard Work', '재능·운 vs 노력', '재능·운 vs 꾸준한 노력, 성공에 더 중요한 것',
+    ['What do you think matters more for success — talent, luck, or hard work?',
+     'Can hard work really beat natural talent?',
+     'Do you feel like luck has played a big role in your own life?'],
+    [['It all comes down to ~', '결국 다 ~에 달렸어'], ['Some people are born with a silver spoon', '금수저로 태어나는 사람도 있지'],
+     ['Practice makes perfect', '연습이 완벽을 만든다'], ['being in the right place at the right time', '때와 장소를 잘 만나는 것 (운)']]),
+  T('t2_trends', 2, 'Current Trends & Hype', '요즘 유행 & 사람 심리', '요즘 유행과 사람들의 심리에 대한 생각',
+    ["What's something that's really trendy in Korea right now?",
+     'Why do you think people jump on trends so quickly?',
+     "Is there a trend you just don't get at all?"],
+    [['Everyone jumped on the bandwagon', '다들 유행에 편승했어'], ["It's pure FOMO", '그냥 나만 뒤처질까 봐 불안한 거야'],
+     ["It's just a passing fad", '그냥 반짝 유행이야'], ['It went viral overnight', '하룻밤 새 확 퍼졌어']]),
+  T('t2_aging', 2, 'Aging & Future Self', '나이 듦 & 10년 뒤 나', '나이 든다는 것의 의미와 10년 뒤 내 모습',
+    ['Where do you see yourself ten years from now?',
+     'What scares you the most about getting older?',
+     'What advice would you give your younger self?'],
+    [['I see myself ~ing', '~하고 있을 것 같아'], ['I want to age gracefully', '곱게 나이 들고 싶어'],
+     ['I wish I had ~ earlier', '~를 더 일찍 했으면 좋았을 텐데'], ['Age is just a number', '나이는 숫자에 불과해']]),
+
+  // 🇺🇸 Track 3 — Bro Vibes & Daily Situations
+  T('t3_venting', 3, 'Ranting & Venting', '하소연 & 근황 수다', '배럭스식 근황 수다, 오늘 겪은 어이없는 일 하소연',
+    ['Man, you look like you had a day. What happened?',
+     "What's the most ridiculous thing that happened to you this week?",
+     'Who got on your nerves the most lately?'],
+    [["You won't believe what happened", '무슨 일 있었는지 들으면 안 믿길걸'], ['It drove me nuts', '그것 때문에 돌아버리는 줄 알았어'],
+     ['I was like, are you serious?', '나 완전 "진심이야?" 이랬잖아'], ['I need to get this off my chest', '이거 털어놔야 속이 시원하겠어']]),
+  T('t3_sports', 3, 'Sports Talk', '스포츠 토크', '야구·축구·UFC 명경기 이야기',
+    ['You catch any good games lately?',
+     "Who's your team, and how are they doing this season?",
+     "What's the craziest game or fight you've ever watched?"],
+    [['It was a real nail-biter', '손에 땀을 쥐는 경기였어'], ['They totally blew the lead', '이기던 걸 완전 날려버렸어'],
+     ['They came from behind to win', '역전승했어'], ["They're on a losing streak", '연패 중이야']]),
+  T('t3_media', 3, 'Movies, Netflix & Games', '영화·넷플릭스·게임', '인생 영화, 정주행 시리즈, 게임 리뷰',
+    ['Binge-watching anything good lately?',
+     "What's your all-time favorite movie, and why?",
+     'Are you playing any games these days?'],
+    [['I binge-watched the whole thing', '한 번에 정주행했어'], ['No spoilers, please!', '스포 하지 마!'],
+     ['It totally lived up to the hype', '기대만큼 대박이었어'], ["I'm completely hooked", '완전히 빠졌어']]),
+  T('t3_plans', 3, 'Plan Changes & Clearing Misunderstandings', '약속 변경 & 오해 풀기', '약속 취소·일정 변경, 친구와 오해 풀기',
+    ['Hey, about this weekend — did something come up on your end?',
+     'Have you ever had a small misunderstanding with a friend that got blown out of proportion?',
+     'How do you usually apologize when you mess up plans?'],
+    [['Something came up', '일이 좀 생겼어'], ['Can we push it back a bit?', '조금 미룰 수 있을까?'],
+     ['Can I take a rain check?', '다음으로 미뤄도 될까?'], ["I didn't mean it that way", '그런 뜻이 아니었어']]),
+  T('t3_complaints', 3, 'Complaints, Refunds & Exchanges', '불만 제기 & 환불·교환', '식당·호텔·쇼핑 불만 제기와 환불·교환 요청',
+    ['Hi there, what seems to be the problem with your order?',
+     'Have you ever had to complain at a restaurant or hotel? What happened?',
+     'Do you usually speak up when the service is bad, or just let it go?'],
+    [["I'd like to return this, please", '이거 반품하고 싶어요'], ["This isn't what I ordered", '이건 제가 주문한 게 아니에요'],
+     ['Could I get a refund or an exchange?', '환불이나 교환 받을 수 있을까요?'], ["I'd like to speak to the manager", '매니저와 얘기하고 싶어요']]),
+  T('t3_clinic', 3, 'Clinic, Pharmacy & Emergencies', '병원·약국·응급 상황', '병원·약국 방문과 긴급 도움 요청',
+    ['So, what brings you in today?',
+     'How long have you had these symptoms?',
+     'Have you ever had to deal with a medical emergency abroad?'],
+    [["I've been feeling under the weather", '몸이 좀 안 좋아요'], ["I've got a sharp pain in my ~", '~가 찌르듯이 아파요'],
+     ['Can I get this over the counter?', '이거 처방전 없이 살 수 있나요?'], ['I think I need to see a doctor', '병원에 가 봐야 할 것 같아요']]),
+
+  // 🏛️ Track 4 — Politics & Diplomacy
+  T('t4_elections', 4, 'US Elections & Korea-US Political News', '미국 대선 & 한미 정치 뉴스', '미국 대선과 한미 정치 뉴스에 대한 가벼운 의견',
+    ['Do you follow American politics at all? What caught your attention recently?',
+     'How do you think US election results end up affecting Korea?',
+     'Why do you think politics has become so polarized in so many countries?'],
+    [['Swing voters decide the election', '부동층이 선거를 결정해'], ["From what I've heard, ~", '내가 듣기로는 ~'],
+     ['It has ripple effects on ~', '~에 파급 효과가 있어'], ['Politics is so polarized these days', '요즘 정치는 너무 양극화됐어']]),
+  T('t4_alliance', 4, 'ROK-US Alliance & Cost Sharing', '한미 동맹 & 방위비 분담', '한미 동맹의 미래와 방위비 분담금',
+    ["How would you explain the ROK-US alliance to someone who's never thought about it?",
+     "What's your take on the debate over defense cost-sharing?",
+     'How do you see the alliance changing over the next decade?'],
+    [['burden sharing', '(방위비) 부담 분담'], ["It's a mutually beneficial relationship", '서로에게 이익이 되는 관계야'],
+     ['It serves as a deterrence', '억지력 역할을 해'], ['There are valid points on both sides', '양쪽 다 일리가 있어']]),
+  T('t4_uschina', 4, 'US-China Rivalry & Supply Chains', '미중 경쟁 & 공급망', '미중 패권 경쟁과 반도체·공급망 이슈',
+    ['How does the US-China rivalry affect everyday people in Korea?',
+     'Should Korea pick a side, or try to stay balanced?',
+     'Why are semiconductors such a big deal in this rivalry?'],
+    [["Korea is caught in the middle", '한국은 중간에 끼어 있어'], ['supply chain disruptions', '공급망 차질'],
+     ['strategic ambiguity', '전략적 모호성'], ['Chips give Korea some leverage', '반도체가 한국에 협상력을 줘']]),
+  T('t4_peninsula', 4, 'Korean Peninsula Security & Diplomacy', '한반도 안보 & 외교', '한반도 안보와 주변국 외교',
+    ['How do people your age in Korea feel about North Korea these days?',
+     'Do you think dialogue or pressure works better with North Korea?',
+     'What role should neighboring countries like Japan and China play?'],
+    [['We need to de-escalate tensions', '긴장을 완화해야 해'], ["It's a delicate balance", '미묘한 균형이 필요한 문제야'],
+     ['a carrot-and-stick approach', '당근과 채찍 전략'], ["It's easier said than done", '말이 쉽지 실제로는 어려워']]),
+  T('t4_conflicts', 4, 'Global Conflicts: Intervention vs America First', '국제 분쟁: 개입 vs 자국 우선', '분쟁 지역과 국제 개입 vs 자국 우선주의',
+    ['When there’s a war somewhere far away, should powerful countries step in?',
+     "What's the strongest argument for an 'America First' approach?",
+     'Where would you personally draw the line on international intervention?'],
+    [['humanitarian intervention', '인도적 개입'], ["Countries should stay out of other countries' affairs", '다른 나라 일에 간섭하지 말아야 해'],
+     ['On the flip side, ~', '반대로 보면 ~'], ['That’s where I draw the line', '나는 거기서 선을 그어']]),
+  T('t4_divide', 4, 'Two Sides of a Social Divide', '사회 갈등의 양면', '첨예한 사회 갈등 이슈의 양측 입장 비교와 내 결론',
+    ['Pick a social issue people really argue about in Korea — what are the two sides saying?',
+     "What's the strongest argument from the side you disagree with?",
+     'After weighing both sides, where do you land, and why?'],
+    [['I can see where they’re coming from', '그 사람들 입장도 이해는 돼'], ['Let me play devil’s advocate', '일부러 반대 입장에서 말해 볼게'],
+     ['We need to find common ground', '공통점을 찾아야 해'], ['All things considered, ~', '모든 걸 고려하면 ~']])
+];
+const SEED_INDEX = new Map(SEED_TOPICS.map(t => [t.id, t]));
+
+const allTopics = () => [...SEED_TOPICS, ...state.customTopics];
+const getTopic = id => SEED_INDEX.get(id) || state.customTopics.find(t => t.id === id) || null;
+const topicProgressOf = id => state.topicProgress[id] || emptyProgress();
+function cooldownLeftMs(topicId) {
+  const tp = state.topicProgress[topicId];
+  if (!tp || !tp.lastClearedAt) return 0;
+  return Math.max(0, tp.lastClearedAt + COOLDOWN_MS - Date.now());
+}
+function fmtCooldown(ms) {
+  if (ms >= 3600000) return `${Math.ceil(ms / 3600000)}h`;
+  return `${Math.max(1, Math.ceil(ms / 60000))}m`;
+}
+
+// ===== [SECTION: GEMINI_CLIENT] =====
+const runtime = { modelList: null, lastResponder: null, toastOnce: new Map() };
+
+class GeminiError extends Error {
+  constructor(message, opts = {}) {
+    super(message);
+    this.name = 'GeminiError';
+    Object.assign(this, { status: 0, retryable: false, retryDelay: null, parseFail: false, thinkingIssue: false, model: null }, opts);
+  }
+}
+
+function modelForRole(role) {
+  const m = state.settings.models;
+  if (role === 'analysis') return m.analysis || DEFAULT_MODELS.analysis;
+  if (role === 'tts') return m.tts || DEFAULT_MODELS.tts;
+  return m.chat || DEFAULT_MODELS.chat;
+}
+function chainForRole(role, override) {
+  const first = normalizeModelId(override || modelForRole(role));
+  if (role === 'tts') return uniq([first, ...TTS_FALLBACKS].filter(Boolean));
+  return uniq([first, ...state.settings.models.fallbackChain.map(normalizeModelId)].filter(Boolean));
+}
+
+// 회화는 thinking 낮게, 분석은 높게. 모델 세대별로 설정 형식이 다르다.
+function thinkingConfigFor(model, level) {
+  if (!level || /tts/i.test(model)) return null;
+  if (/gemini-(1\.|2\.0)/i.test(model)) return null;
+  if (/gemini-2\.5/i.test(model)) {
+    if (level === 'high') return { thinkingBudget: -1 };
+    return { thinkingBudget: /pro/i.test(model) ? 128 : 0 };
+  }
+  return { thinkingLevel: level === 'high' ? 'high' : 'low' };
+}
+
+function parseRetryDelay(json) {
+  const details = json?.error?.details;
+  if (Array.isArray(details)) {
+    const info = details.find(d => String(d['@type'] || '').includes('RetryInfo'));
+    if (info?.retryDelay) { const n = parseFloat(info.retryDelay); if (Number.isFinite(n)) return n; }
+  }
+  const m = /retry in ([\d.]+)\s*s/i.exec(json?.error?.message || '');
+  return m ? parseFloat(m[1]) : null;
+}
+
+async function requestModel(model, body, signal) {
+  const key = getApiKey();
+  if (!key) throw new GeminiError('Gemini API 키가 없어요. ⚙️ 설정에서 입력해 주세요.', { code: 'NO_KEY' });
+  if (navigator.onLine === false) throw new GeminiError('인터넷 연결이 끊겨 있어요. 연결 후 다시 시도해 주세요.', { code: 'OFFLINE' });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify(body),
+      signal
+    });
+  } catch (e) {
+    if (isAbort(e)) throw e;
+    throw new GeminiError(`네트워크 오류 (${e.message || 'fetch failed'})`, { retryable: true, model });
+  }
+  let json = null;
+  try { json = await res.json(); } catch {}
+  if (!res.ok) {
+    const msg = json?.error?.message || res.statusText || `HTTP ${res.status}`;
+    const unsupported = /not (found|supported)|unsupported|does not support|is not available|no longer available/i.test(msg);
+    throw new GeminiError(msg, {
+      status: res.status,
+      model,
+      retryable: [404, 429, 500, 502, 503, 504].includes(res.status) || (res.status === 400 && unsupported),
+      retryDelay: res.status === 429 ? parseRetryDelay(json) : null,
+      thinkingIssue: res.status === 400 && /thinking/i.test(msg)
+    });
+  }
+  return json || {};
+}
+
+function extractText(json) {
+  const parts = json?.candidates?.[0]?.content?.parts || [];
+  return parts.filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('').trim();
+}
+function parseJsonLoose(text) {
+  try { return JSON.parse(text); } catch {}
+  const cleaned = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}');
+  if (a >= 0 && b > a) return JSON.parse(cleaned.slice(a, b + 1));
+  throw new Error('JSON parse failed');
+}
+
+function friendlyError(e) {
+  if (!e) return new Error('알 수 없는 오류');
+  if (e.code) return e;
+  const msg = String(e.message || '');
+  let out = msg;
+  if (e.status === 400 && /api key not valid|API_KEY_INVALID/i.test(msg)) out = 'API 키가 올바르지 않아요. ⚙️ 설정에서 확인해 주세요.';
+  else if (e.status === 401 || e.status === 403) out = `API 키 권한 오류 (${e.status}). 키 또는 결제/지역 설정을 확인해 주세요.`;
+  else if (e.status === 429) out = `요청 한도 초과 (429)${e.retryDelay ? ` — 약 ${Math.ceil(e.retryDelay)}초 후 다시 시도해 주세요` : ' — 잠시 후 다시 시도해 주세요'}`;
+  else if (e.status >= 500) out = `Gemini 서버 오류 (${e.status}) — 잠시 후 다시 시도해 주세요`;
+  else if (e.status === 404) out = `모델을 찾을 수 없어요 (${e.model}). ⚙️ 설정에서 모델을 확인해 주세요.`;
+  else if (e.parseFail) out = 'AI 응답 형식이 올바르지 않아요. 다시 시도해 주세요.';
+  const err = new Error(out);
+  err.status = e.status;
+  return err;
+}
+
+function noteResponder(model, role, fallbackUsed) {
+  if (role === 'tts') return;
+  runtime.lastResponder = { model, role, fallbackUsed, at: Date.now() };
+  renderCornerBadge();
+}
+
+/**
+ * 공통 호출 함수.
+ * - schema가 있으면 JSON 모드 + responseSchema, 파싱 실패 시 같은 모델로 1회 재요청
+ * - 429·500·503·404·모델 미지원이면 지수 백오프(1초→2초) 후 폴백 체인의 다음 모델로
+ */
+async function callGemini({ role = 'chat', contents, systemInstruction, schema, thinking = null, generationConfig = {}, raw = false, signal, modelOverride } = {}) {
+  const chain = chainForRole(role, modelOverride);
+  let lastErr = null;
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    let useThinking = thinking;
+    let parseRetried = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const body = { contents, generationConfig: { ...generationConfig } };
+      if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
+      if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseSchema = schema; }
+      const tc = thinkingConfigFor(model, useThinking);
+      if (tc) body.generationConfig.thinkingConfig = tc;
+      try {
+        const json = await requestModel(model, body, signal);
+        const responder = normalizeModelId(json.modelVersion) || model;
+        if (raw) { noteResponder(responder, role, i > 0); return { json, model: responder }; }
+        const text = extractText(json);
+        if (!text) {
+          const reason = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason || 'EMPTY';
+          throw new GeminiError(`빈 응답 (${reason})`, { parseFail: true, retryable: true, model });
+        }
+        if (!schema) { noteResponder(responder, role, i > 0); return { text, model: responder }; }
+        let data;
+        try { data = parseJsonLoose(text); } catch { throw new GeminiError('JSON 파싱 실패', { parseFail: true, retryable: true, model }); }
+        noteResponder(responder, role, i > 0);
+        return { data, model: responder };
+      } catch (e) {
+        if (isAbort(e)) throw e;
+        lastErr = e;
+        if (e.thinkingIssue && useThinking) { useThinking = null; continue; }
+        if (e.parseFail && !parseRetried) { parseRetried = true; continue; }
+        if (!e.retryable) throw friendlyError(e);
+        break;
+      }
+    }
+    if (i < chain.length - 1) {
+      if (lastErr?.status === 429) {
+        toast(`⏳ ${model} 요청 한도 초과${lastErr.retryDelay ? ` — ${Math.ceil(lastErr.retryDelay)}초 후 재사용 가능` : ''}. ${chain[i + 1]}(으)로 전환할게요`, 'warn', 5000);
+      } else {
+        toast(`⚠️ ${model} 응답 실패 → ${chain[i + 1]}(으)로 전환`, 'warn');
+      }
+      await sleep(Math.min(1000 * 2 ** i, 2000), signal);
+    }
+  }
+  throw friendlyError(lastErr);
+}
+
+async function fetchModelList() {
+  const key = getApiKey();
+  if (!key) throw new Error('먼저 API 키를 저장해 주세요');
+  const models = [];
+  let pageToken = '';
+  for (let page = 0; page < 5; page++) {
+    const url = `${API_BASE}/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    let res;
+    try { res = await fetch(url, { headers: { 'x-goog-api-key': key } }); }
+    catch (e) { throw new Error('네트워크 오류로 모델 목록을 가져오지 못했어요'); }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw friendlyError(new GeminiError(json?.error?.message || `HTTP ${res.status}`, { status: res.status }));
+    for (const m of json.models || []) {
+      if ((m.supportedGenerationMethods || []).includes('generateContent')) {
+        models.push({ id: normalizeModelId(m.name), displayName: m.displayName || '' });
+      }
+    }
+    if (!json.nextPageToken) break;
+    pageToken = json.nextPageToken;
+  }
+  if (!models.length) throw new Error('generateContent를 지원하는 모델이 없어요');
+  runtime.modelList = models;
+  try { localStorage.setItem(LS_MODEL_CACHE, JSON.stringify({ fetchedAt: Date.now(), models })); } catch {}
+  return models;
+}
+function loadModelCache() {
+  try { const c = JSON.parse(localStorage.getItem(LS_MODEL_CACHE) || 'null'); if (c && Array.isArray(c.models)) runtime.modelList = c.models; } catch {}
+}
+function modelOptionsFor(role) {
+  const ids = runtime.modelList ? runtime.modelList.map(m => m.id) : DEFAULT_MODEL_OPTIONS;
+  const isTts = id => /tts/i.test(id);
+  const nonChat = /embedding|imagen|image-generation|veo|aqa|native-audio|live|learnlm/i;
+  let list = role === 'tts' ? ids.filter(isTts) : ids.filter(id => !isTts(id) && !nonChat.test(id));
+  if (!list.length) list = DEFAULT_MODEL_OPTIONS.filter(id => (role === 'tts') === isTts(id));
+  return uniq([modelForRole(role), ...list]);
+}
+
+async function geminiTTS(text, voiceName, signal) {
+  const { json } = await callGemini({
+    role: 'tts',
+    contents: [{ role: 'user', parts: [{ text }] }],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
+    },
+    raw: true,
+    signal
+  });
+  const part = (json?.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data || p.inline_data?.data);
+  const inline = part?.inlineData || part?.inline_data;
+  if (!inline) throw new Error('TTS 응답에 오디오가 없어요');
+  const mime = inline.mimeType || inline.mime_type || '';
+  const rate = Number((/rate=(\d+)/i.exec(mime) || [])[1]) || 24000;
+  return pcm16Base64ToBuffer(inline.data, rate);
+}
+
+// ===== [SECTION: AUDIO] =====
+const audio = {
+  ctx: null, stream: null, recorder: null, chunks: [], recMime: '',
+  analyser: null, analyserSource: null, monitorTimer: null,
+  speechDetected: false, lastLoudAt: 0, recStartedAt: 0,
+  currentSource: null, playResolve: null, speechUnlocked: false,
+  ttsCache: new Map()
+};
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const stt = { active: null, cancelled: false };
+
+// iOS: AudioContext는 반드시 사용자 탭 이벤트 안에서 만들고 resume 한다
+function ensureAudioContext() {
+  try {
+    if (!audio.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audio.ctx = new AC();
+    }
+    if (audio.ctx.state !== 'running') audio.ctx.resume().catch(() => {});
+  } catch (e) { console.warn('AudioContext', e); }
+  return audio.ctx;
+}
+function unlockSpeechSynthesis() {
+  try {
+    if ('speechSynthesis' in window && !audio.speechUnlocked) {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+      audio.speechUnlocked = true;
+    }
+  } catch {}
+}
+
+async function getMicStream() {
+  if (audio.stream && audio.stream.getAudioTracks().some(t => t.readyState === 'live')) return audio.stream;
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('이 브라우저에서는 마이크를 쓸 수 없어요 (HTTPS 또는 localhost 필요)');
+  audio.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  audio.analyser = null;
+  return audio.stream;
+}
+function releaseMic() {
+  stopLevelMonitor();
+  try { audio.analyserSource?.disconnect(); } catch {}
+  audio.analyserSource = null;
+  audio.analyser = null;
+  if (audio.stream) audio.stream.getTracks().forEach(t => t.stop());
+  audio.stream = null;
+}
+function micErrorMsg(e) {
+  const n = e?.name || '';
+  if (n === 'NotAllowedError' || n === 'SecurityError') return '마이크 권한이 거부됐어요. 브라우저/설정 앱에서 마이크를 허용해 주세요';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return '사용 가능한 마이크를 찾지 못했어요';
+  if (n === 'NotReadableError') return '다른 앱이 마이크를 사용 중이에요';
+  return e?.message || '마이크를 시작하지 못했어요';
+}
+const isPermissionError = e => ['NotAllowedError', 'SecurityError', 'NotFoundError'].includes(e?.name);
+
+function pickRecorderMime() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  const ua = navigator.userAgent;
+  const isWebKit = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg|Firefox/.test(ua) || /CriOS|FxiOS/.test(ua);
+  const list = isWebKit
+    ? ['audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (const m of list) { try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {} }
+  return '';
+}
+
+async function startRecording(onAutoStop) {
+  const ctx = ensureAudioContext();
+  const stream = await getMicStream();
+  const mime = pickRecorderMime();
+  if (mime === null) throw new Error('이 브라우저는 녹음(MediaRecorder)을 지원하지 않아요. 다른 입력 방식을 선택해 주세요');
+  audio.chunks = [];
+  audio.recMime = mime;
+  const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  rec.ondataavailable = e => { if (e.data && e.data.size) audio.chunks.push(e.data); };
+  audio.recorder = rec;
+  rec.start(250);
+  audio.recStartedAt = performance.now();
+  audio.speechDetected = false;
+  audio.lastLoudAt = performance.now();
+  startLevelMonitor(ctx, stream, onAutoStop);
+}
+
+function startLevelMonitor(ctx, stream, onAutoStop) {
+  stopLevelMonitor();
+  if (ctx && !audio.analyser) {
+    try {
+      audio.analyserSource = ctx.createMediaStreamSource(stream);
+      audio.analyser = ctx.createAnalyser();
+      audio.analyser.fftSize = 1024;
+      audio.analyserSource.connect(audio.analyser);
+    } catch (e) { console.warn('analyser', e); audio.analyser = null; }
+  }
+  const buf = audio.analyser ? new Uint8Array(audio.analyser.fftSize) : null;
+  audio.monitorTimer = setInterval(() => {
+    const now = performance.now();
+    let rms = 0;
+    if (audio.analyser && buf) {
+      audio.analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      rms = Math.sqrt(sum / buf.length);
+    }
+    if (rms > SILENCE.threshold) { audio.speechDetected = true; audio.lastLoudAt = now; }
+    updateLevelMeter(Math.min(1, rms * 6), now - audio.recStartedAt);
+    const silentLong = state.settings.autoStopOnSilence && audio.speechDetected && now - audio.lastLoudAt > SILENCE.holdMs;
+    const tooLong = now - audio.recStartedAt > SILENCE.maxRecordMs;
+    if (silentLong || tooLong) { stopLevelMonitor(); onAutoStop && onAutoStop(tooLong ? 'max' : 'silence'); }
+  }, 100);
+}
+function stopLevelMonitor() {
+  clearInterval(audio.monitorTimer);
+  audio.monitorTimer = null;
+}
+
+function stopRecording() {
+  return new Promise(resolve => {
+    stopLevelMonitor();
+    const rec = audio.recorder;
+    if (!rec || rec.state === 'inactive') { audio.recorder = null; resolve(null); return; }
+    rec.onstop = () => {
+      const type = rec.mimeType || audio.recMime || 'audio/webm';
+      const blob = new Blob(audio.chunks, { type });
+      audio.recorder = null;
+      audio.chunks = [];
+      resolve(blob.size ? blob : null);
+    };
+    try { rec.stop(); } catch { audio.recorder = null; resolve(null); }
+  });
+}
+function cancelRecording() {
+  stopLevelMonitor();
+  const rec = audio.recorder;
+  if (rec && rec.state !== 'inactive') { rec.onstop = null; try { rec.stop(); } catch {} }
+  audio.recorder = null;
+  audio.chunks = [];
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error || new Error('파일 읽기 실패'));
+    r.readAsDataURL(blob);
+  });
+}
+function decodeAudio(ctx, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    const p = ctx.decodeAudioData(arrayBuffer, resolve, reject);
+    if (p && typeof p.then === 'function') p.then(resolve, reject);
+  });
+}
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  writeStr(36, 'data'); view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// 녹음 결과를 16kHz mono WAV로 변환해 전송 (모든 브라우저 포맷을 Gemini가 확실히 읽도록). 변환 실패 시 원본 그대로.
+async function prepareAudioForGemini(blob) {
+  const ctx = ensureAudioContext();
+  try {
+    const decoded = await decodeAudio(ctx, await blob.arrayBuffer());
+    if (decoded.duration < 0.4) return { tooShort: true };
+    const rate = 16000;
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const off = new OAC(1, Math.max(1, Math.ceil(decoded.duration * rate)), rate);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start(0);
+    const rendered = await off.startRendering();
+    const wav = encodeWav(rendered.getChannelData(0), rate);
+    return { part: { mimeType: 'audio/wav', data: await blobToBase64(wav) }, duration: decoded.duration };
+  } catch (e) {
+    console.warn('WAV 변환 실패 → 원본 전송', e);
+    const mime = (blob.type || 'audio/webm').split(';')[0];
+    return { part: { mimeType: mime, data: await blobToBase64(blob) }, duration: null };
+  }
+}
+
+// Gemini TTS 응답(Base64 16-bit PCM, little-endian, mono) → Float32 AudioBuffer
+function pcm16Base64ToBuffer(b64, sampleRate = 24000) {
+  const ctx = ensureAudioContext();
+  if (!ctx) throw new Error('오디오 재생을 지원하지 않는 브라우저예요');
+  const bin = atob(b64);
+  const len = bin.length >> 1;
+  const buffer = ctx.createBuffer(1, Math.max(1, len), sampleRate);
+  const ch = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+    if (v >= 0x8000) v -= 0x10000;
+    ch[i] = v / 32768;
+  }
+  return buffer;
+}
+
+function playBuffer(buffer) {
+  return new Promise(resolve => {
+    stopPlayback();
+    const ctx = ensureAudioContext();
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    const done = () => { if (audio.currentSource === src) { audio.currentSource = null; audio.playResolve = null; } resolve(); };
+    src.onended = done;
+    audio.currentSource = src;
+    audio.playResolve = done;
+    src.start();
+  });
+}
+function stopPlayback() {
+  const resolveFn = audio.playResolve;
+  if (audio.currentSource) {
+    try { audio.currentSource.onended = null; audio.currentSource.stop(); } catch {}
+    audio.currentSource = null;
+  }
+  audio.playResolve = null;
+  try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch {}
+  if (resolveFn) resolveFn();
+}
+
+function pickBrowserVoice() {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = speechSynthesis.getVoices() || [];
+  let pool = voices.filter(v => /^en[-_]US/i.test(v.lang));
+  if (!pool.length) pool = voices.filter(v => /^en/i.test(v.lang));
+  if (!pool.length) return null;
+  const score = v => {
+    const n = v.name || '';
+    let s = 0;
+    if (/premium/i.test(n)) s += 5;
+    if (/enhanced/i.test(n)) s += 4;
+    if (/natural|neural/i.test(n)) s += 3;
+    if (/google/i.test(n)) s += 2;
+    if (/samantha|alex|ava|evan|zoe|nathan/i.test(n)) s += 1;
+    if (/compact|novelty|bad news|bells|bubbles|whisper|zarvox|trinoids|cellos|organ|boing|jester|superstar|wobble/i.test(n)) s -= 10;
+    if (v.localService) s += 0.5;
+    return s;
+  };
+  return pool.slice().sort((a, b) => score(b) - score(a))[0];
+}
+
+function speakBrowser(text) {
+  return new Promise(resolve => {
+    if (!('speechSynthesis' in window)) { resolve(); return; }
+    try { speechSynthesis.cancel(); } catch {}
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickBrowserVoice();
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+    const stage = state.settings.stage;
+    u.rate = stage === 1 ? 0.92 : stage >= 4 ? 1.08 : 1;
+    let finished = false;
+    const fin = () => { if (finished) return; finished = true; clearTimeout(guard); if (audio.playResolve === fin) audio.playResolve = null; resolve(); };
+    const guard = setTimeout(fin, Math.max(5000, text.length * 110));
+    u.onend = fin;
+    u.onerror = fin;
+    audio.playResolve = fin;
+    speechSynthesis.speak(u);
+  });
+}
+
+/** reply 음성 출력: Gemini TTS → 실패 시 speechSynthesis 폴백. 반환값 'gemini' | 'browser' */
+async function speak(text, { voice, signal, onStart, quietFallback = false } = {}) {
+  if (!text) return 'none';
+  const voiceName = voice || state.settings.voiceName;
+  const key = `${voiceName}|${text}`;
+  try {
+    let buffer = audio.ttsCache.get(key);
+    if (!buffer) {
+      buffer = await geminiTTS(text, voiceName, signal);
+      audio.ttsCache.set(key, buffer);
+      if (audio.ttsCache.size > 40) audio.ttsCache.delete(audio.ttsCache.keys().next().value);
+    }
+    if (signal?.aborted) return 'none';
+    onStart && onStart('gemini');
+    await playBuffer(buffer);
+    return 'gemini';
+  } catch (e) {
+    if (isAbort(e) || signal?.aborted) return 'none';
+    console.warn('TTS fallback', e);
+    if (!quietFallback) toastOnce('tts-fallback', `🔊 Gemini 음성 실패 → 브라우저 음성으로 대체 (${e.message})`, 'warn', 60000);
+    onStart && onStart('browser');
+    await speakBrowser(text);
+    return 'browser';
+  }
+}
+
+function sttErrorMsg(code) {
+  return ({
+    'not-allowed': '음성 인식 권한이 거부됐어요 (아이폰은 설정 > Siri에서 받아쓰기 허용 필요)',
+    'service-not-allowed': '이 브라우저에서 음성 인식 서비스를 쓸 수 없어요',
+    'audio-capture': '마이크를 찾지 못했어요',
+    'network': '음성 인식 네트워크 오류예요',
+    'language-not-supported': '이 언어의 음성 인식을 지원하지 않아요'
+  })[code] || `음성 인식 오류 (${code})`;
+}
+function startBrowserStt({ lang = 'en-US', continuous = false, onInterim } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!SR) { reject(new Error('이 브라우저는 음성 인식을 지원하지 않아요')); return; }
+    const rec = new SR();
+    rec.lang = lang;
+    rec.interimResults = true;
+    rec.continuous = continuous;
+    rec.maxAlternatives = 1;
+    let finalText = '', interim = '', errCode = null;
+    rec.onresult = e => {
+      interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript + ' ';
+        else interim += r[0].transcript;
+      }
+      onInterim && onInterim((finalText + interim).trim());
+    };
+    rec.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') errCode = e.error; };
+    rec.onend = () => {
+      if (stt.active === rec) stt.active = null;
+      const text = (finalText + interim).trim();
+      if (errCode && !text) reject(new Error(sttErrorMsg(errCode)));
+      else resolve(text);
+    };
+    stt.active = rec;
+    try { rec.start(); } catch (e) { stt.active = null; reject(e); }
+  });
+}
+function stopBrowserStt() { try { stt.active?.stop(); } catch {} }
+function abortBrowserStt() { try { stt.active?.abort(); } catch {} stt.active = null; }
+
+// ===== [SECTION: CONVERSATION] =====
+const CONVERSATION_PROMPT_TEMPLATE = `You are {persona}, a native English speaker chatting with a Korean friend who is practicing speaking.
+Topic: {title} — {subtitle}. Track concept: {trackConcept}.
+Stage {stage} style: {stageStyle}.
+
+VOICE CHANNEL RULES
+- Never correct, explain, or mention the user's grammar, word choice, or pronunciation in "reply". Corrections go ONLY in the "hud" field.
+- Talk like a curious friend, not a teacher or examiner. React naturally to what they said (show you actually listened), then ask exactly ONE follow-up question.
+- Dig into specifics: when, where, who, why, how it felt, what happened next, what they would do differently.
+- Keep "reply" short so the user talks more: max 35 words in Stage 1–2, max 55 words in Stage 3–4. Target talk ratio: user 70%, you 30%.
+- Stage 3: push back politely with a counterpoint or "what if" every 2–3 turns.
+- Stage 4: native speed phrasing, idioms, light humor, diplomatic hedging.
+- Track 4: never take a partisan side. Present both sides' strongest arguments and ask for the user's reasoning.
+- If the user answers very briefly, ask a narrower, easier question instead of a broader one.
+- Naturally create chances for the user to use these expressions (never list them): {keyExpressions}.
+
+TOPIC HISTORY
+This topic has been cleared {clearCount} times.
+Previous session summaries: {summaries}
+Angles already covered: {anglesCovered}
+If clearCount > 0: do NOT reuse the basic starter questions or covered angles. Open from a fresh angle: a specific past episode, an unexpected dilemma, the opposite viewpoint, or a future plan.
+If clearCount = 0: open with one of these starters: {starterQuestions}.
+
+Respond ONLY with JSON matching the schema.`;
+
+const SIGNAL_KEYS = ['fluency', 'vocab', 'grammar', 'logic', 'nuance'];
+const STAT_LABELS = { fluency: '유창성', vocab: '어휘', grammar: '문법', logic: '논리', nuance: '뉘앙스·발음' };
+
+const TURN_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    transcript: { type: 'STRING', description: 'What the user actually said in English, verbatim as heard. Do NOT fix grammar errors. Empty string if nothing intelligible was said.' },
+    reply: { type: 'STRING', description: 'Your next spoken line: a short natural reaction + exactly ONE follow-up question. Never any correction here.' },
+    hud: {
+      type: 'OBJECT',
+      properties: {
+        original: { type: 'STRING', description: "The user's sentence (or its key part) being upgraded, verbatim." },
+        upgrade: { type: 'STRING', description: 'How a native speaker would most naturally say it. If it was already natural, give a more native-sounding alternative.' },
+        tipKo: { type: 'STRING', description: '시제·구동사·뉘앙스 핵심 1줄 (한국어). 이미 자연스러우면 "👍 자연스러움"으로 시작.' }
+      },
+      required: ['original', 'upgrade', 'tipKo']
+    },
+    pronunciationNoteKo: { type: 'STRING', nullable: true, description: '오디오 입력일 때만: 발음·억양 1줄 피드백 (한국어). 텍스트 입력이거나 지적할 게 없으면 null.' },
+    signals: {
+      type: 'OBJECT',
+      description: '0-100 scores for this single turn.',
+      properties: { fluency: { type: 'INTEGER' }, vocab: { type: 'INTEGER' }, grammar: { type: 'INTEGER' }, logic: { type: 'INTEGER' }, nuance: { type: 'INTEGER' } },
+      required: SIGNAL_KEYS
+    },
+    angleTag: { type: 'STRING', description: 'The conversation angle covered in this turn, 3-5 English words.' }
+  },
+  required: ['transcript', 'reply', 'hud', 'signals', 'angleTag']
+};
+const OPENING_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    reply: { type: 'STRING', description: 'Your opening line: a one-line casual greeting + your first question.' },
+    angleTag: { type: 'STRING', description: 'The angle of your opening question, 3-5 English words.' }
+  },
+  required: ['reply', 'angleTag']
+};
+const CLOSING_SCHEMA = {
+  type: 'OBJECT',
+  properties: { reply: { type: 'STRING', description: 'A short, natural, warm wrap-up line (1-2 sentences). No question.' } },
+  required: ['reply']
+};
+
+let S = null; // 진행 중인 회화 세션 (런타임 전용)
+const talk = { pending: null, report: null };
+
+function fillTemplate(tpl, vars) {
+  return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+}
+function buildSystemInstruction(topic, stage, tp) {
+  const st = STAGES[stage];
+  const track = TRACKS[topic.track] || CUSTOM_TRACK;
+  const keyExpr = topic.keyExpressions?.length ? topic.keyExpressions.map(k => k.en).join('; ') : '(none given — use natural, useful expressions for this topic)';
+  const starters = topic.starterQuestions?.length
+    ? topic.starterQuestions.map(q => `"${q}"`).join(' / ')
+    : `a natural question asking what happened or what they want to share about "${topic.userInput || topic.title}"`;
+  return fillTemplate(CONVERSATION_PROMPT_TEMPLATE, {
+    persona: st.persona,
+    title: topic.title,
+    subtitle: topic.subtitle || topic.titleKo || '',
+    trackConcept: track.concept,
+    stage,
+    stageStyle: st.style,
+    keyExpressions: keyExpr,
+    clearCount: tp.clearCount,
+    summaries: tp.summaries.length ? tp.summaries.map((s, i) => `(${i + 1}) ${s}`).join(' ') : 'none',
+    anglesCovered: tp.anglesCovered.length ? tp.anglesCovered.slice(-25).join(', ') : 'none',
+    starterQuestions: starters
+  });
+}
+const historyToContents = history => history.map(h => ({ role: h.role, parts: [{ text: h.text }] }));
+
+function buildTurnNote(kind, timeUp) {
+  let note;
+  if (kind === 'audio') note = '[Voice turn] My answer is in the attached audio. Put exactly what I said (verbatim, errors included, nothing fixed) in "transcript"; if the audio is silent or unintelligible, set transcript to "". Give pronunciation/intonation feedback in "pronunciationNoteKo" (or null).';
+  else if (kind === 'stt') note = '[Browser speech-to-text turn] My answer below came from the browser speech recognizer and may contain recognition errors. Copy it into "transcript" as-is. pronunciationNoteKo must be null; set signals.nuance to 0.';
+  else note = '[Typed turn] I typed my answer below (no audio). Copy it into "transcript" as-is. pronunciationNoteKo must be null; set signals.nuance to 0.';
+  if (timeUp) note += ' [TIME IS UP] In "reply": react briefly to what I said, then wrap up the chat warmly in 1–2 short sentences. Do NOT ask a question.';
+  return note;
+}
+
+function openSetup(topic, { isRandom = false, onCooldown = false } = {}) {
+  if (S) { toast('진행 중인 대화가 있어요. 먼저 종료해 주세요', 'warn'); switchView('talk'); return; }
+  talk.pending = { topic, isRandom, onCooldown };
+  talk.report = null;
+  switchView('talk');
+  renderTalk();
+}
+
+async function startSession() {
+  const p = talk.pending;
+  if (!p || S) return;
+  if (!getApiKey()) { toast('먼저 ⚙️ 설정에서 Gemini API 키를 입력해 주세요', 'warn'); openSettings(); return; }
+  // iOS: 탭 이벤트 안에서 오디오 잠금 해제
+  ensureAudioContext();
+  unlockSpeechSynthesis();
+  let mode = state.settings.inputMode;
+  if (mode === 'browserStt' && !SR) { mode = 'record'; switchInputMode('record', true); }
+  if (mode === 'record') {
+    try { await getMicStream(); }
+    catch (e) {
+      toast(`${micErrorMsg(e)} → 키보드 모드로 전환했어요`, 'error', 6000);
+      switchInputMode('keyboard', true);
+    }
+  }
+  const topic = p.topic;
+  const stage = state.settings.stage;
+  const tp = topicProgressOf(topic.id);
+  const deepTalk = state.settings.useAnalysisModelForDeepTalk && stage >= 3 && topic.track === 4;
+  S = {
+    id: uid('ses'), topic, stage,
+    isRandom: p.isRandom, onCooldown: p.onCooldown,
+    startedAt: Date.now(),
+    history: [], turns: [], log: [],
+    usedAudio: false,
+    status: 'opening',
+    timer: { limitMs: state.settings.timerPreset ? state.settings.timerPreset * 60000 : 0, elapsedMs: 0, last: performance.now() },
+    pauses: new Set(),
+    timeUp: false, closing: false,
+    hudOpen: true, hudUnseen: 0,
+    chatRole: deepTalk ? 'analysis' : 'chat',
+    systemInstruction: buildSystemInstruction(topic, stage, tp),
+    draftText: '', lastFailedInput: null, ttsMode: null, openingAngle: null
+  };
+  talk.pending = null;
+  talk.report = null;
+  renderNav();
+  renderTalk();
+  startTimer();
+  await requestOpening();
+}
+
+async function requestOpening() {
+  if (!S) return;
+  const sid = S.id;
+  S.status = 'opening';
+  renderControls();
+  try {
+    S.abort = new AbortController();
+    const { data } = await callGemini({
+      role: S.chatRole,
+      contents: [{ role: 'user', parts: [{ text: "(Session start. You speak first: one short casual greeting line + your opening question. I haven't said anything yet.)" }] }],
+      systemInstruction: S.systemInstruction,
+      schema: OPENING_SCHEMA,
+      thinking: S.chatRole === 'analysis' ? 'high' : 'low',
+      signal: S.abort.signal
+    });
+    if (!S || S.id !== sid) return;
+    const reply = String(data?.reply || '').trim() || "Hey! Good to see you. So, what's been going on with you lately?";
+    S.openingAngle = String(data?.angleTag || '').trim() || null;
+    S.history.push({ role: 'user', text: '(Session start)' }, { role: 'model', text: reply });
+    appendAiBubble(reply);
+    await aiSpeak(reply);
+    if (!S || S.id !== sid) return;
+    if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
+    checkTimeUpWhenIdle();
+  } catch (e) {
+    if (isAbort(e) || !S || S.id !== sid) return;
+    toast(`첫 질문을 받지 못했어요: ${e.message}`, 'error', 6000);
+    S.status = 'openingFailed';
+    renderControls();
+  }
+}
+
+async function aiSpeak(text) {
+  if (!S) return;
+  const sid = S.id;
+  S.status = 'processing';
+  renderControls();
+  S.ttsAbort = new AbortController();
+  await speak(text, {
+    signal: S.ttsAbort.signal,
+    onStart: m => { if (S && S.id === sid && S.status === 'processing') { S.status = 'speaking'; S.ttsMode = m; renderControls(); } }
+  });
+}
+function skipSpeech() {
+  if (!S) return;
+  S.ttsAbort?.abort();
+  stopPlayback();
+}
+async function replayText(text) {
+  ensureAudioContext();
+  if (!text) return;
+  if (!S) { speak(text); return; }
+  if (S.status !== 'ready') { toast('지금은 다시 듣기를 할 수 없어요', 'warn'); return; }
+  const sid = S.id;
+  await aiSpeak(text);
+  if (S && S.id === sid && (S.status === 'processing' || S.status === 'speaking')) { S.status = 'ready'; renderControls(); }
+  checkTimeUpWhenIdle();
+}
+
+function normalizeTurn(d, localTranscript, inputType) {
+  const sig = isObj(d?.signals) ? d.signals : {};
+  const hud = isObj(d?.hud) ? d.hud : {};
+  const transcript = String(localTranscript ?? d?.transcript ?? '').trim();
+  const pronRaw = d?.pronunciationNoteKo == null ? '' : String(d.pronunciationNoteKo).trim();
+  return {
+    transcript,
+    reply: String(d?.reply || '').trim() || 'Got it — tell me a bit more about that?',
+    hud: {
+      original: String(hud.original || transcript).trim(),
+      upgrade: String(hud.upgrade || '').trim(),
+      tipKo: String(hud.tipKo || '').trim()
+    },
+    pron: inputType === 'audio' && pronRaw && !/^(null|none|없음)$/i.test(pronRaw) ? pronRaw : null,
+    signals: {
+      fluency: clampInt(sig.fluency, 0, 100, 60), vocab: clampInt(sig.vocab, 0, 100, 60),
+      grammar: clampInt(sig.grammar, 0, 100, 60), logic: clampInt(sig.logic, 0, 100, 60),
+      nuance: inputType === 'audio' ? clampInt(sig.nuance, 0, 100, 60) : null
+    },
+    angleTag: String(d?.angleTag || '').trim().slice(0, 60),
+    inputType,
+    at: Date.now()
+  };
+}
+
+async function processUserTurn(input) {
+  if (!S) return;
+  const sid = S.id;
+  const timeUpAtSend = S.timeUp;
+  S.status = 'processing';
+  S.lastFailedInput = null;
+  renderControls();
+  try {
+    let parts, localTranscript = null, inputType;
+    if (input.kind === 'audio') {
+      const prep = input.prepared || await prepareAudioForGemini(input.blob);
+      if (!S || S.id !== sid) return;
+      if (prep.tooShort) {
+        toast('녹음이 너무 짧아요. 조금 더 길게 말해 주세요', 'warn');
+        S.status = 'ready'; renderControls(); checkTimeUpWhenIdle();
+        return;
+      }
+      input.prepared = prep;
+      inputType = 'audio';
+      parts = [{ text: buildTurnNote('audio', timeUpAtSend) }, { inlineData: prep.part }];
+    } else {
+      localTranscript = input.text.trim();
+      inputType = input.source;
+      parts = [{ text: buildTurnNote(input.source, timeUpAtSend) }, { text: localTranscript }];
+    }
+    S.abort = new AbortController();
+    const { data } = await callGemini({
+      role: S.chatRole,
+      contents: [...historyToContents(S.history), { role: 'user', parts }],
+      systemInstruction: S.systemInstruction,
+      schema: TURN_SCHEMA,
+      thinking: S.chatRole === 'analysis' ? 'high' : 'low',
+      signal: S.abort.signal
+    });
+    if (!S || S.id !== sid) return;
+    const turn = normalizeTurn(data, localTranscript, inputType);
+    if (!turn.transcript) {
+      toast('목소리를 알아듣지 못했어요. 다시 말해 주세요 🎙️', 'warn');
+      S.status = 'ready'; renderControls(); checkTimeUpWhenIdle();
+      return;
+    }
+    S.turns.push(turn);
+    if (inputType === 'audio') S.usedAudio = true;
+    if (inputType === 'keyboard') S.draftText = '';
+    S.history.push({ role: 'user', text: turn.transcript }, { role: 'model', text: turn.reply });
+    appendUserBubble(turn.transcript, inputType);
+    addHudCard(turn, S.turns.length - 1);
+    appendAiBubble(turn.reply);
+    await aiSpeak(turn.reply);
+    if (!S || S.id !== sid) return;
+    if (timeUpAtSend) { finishSession(); return; }
+    if (S.status === 'processing' || S.status === 'speaking') { S.status = 'ready'; renderControls(); }
+    checkTimeUpWhenIdle();
+  } catch (e) {
+    if (isAbort(e) || !S || S.id !== sid) return;
+    toast(`응답 실패: ${e.message}`, 'error', 6000);
+    S.lastFailedInput = input;
+    S.status = 'ready';
+    renderControls();
+  }
+}
+
+async function micTap() {
+  if (!S) return;
+  ensureAudioContext();
+  if (S.status === 'listening') { stopListening(); return; }
+  if (S.status === 'speaking') { skipSpeech(); } // 끼어들기: AI 음성 중단 후 바로 녹음
+  else if (S.status !== 'ready') return;
+  if (S.pauses.size) { toast('일시정지 상태예요. 먼저 재개해 주세요', 'warn'); return; }
+  const mode = state.settings.inputMode;
+  if (mode === 'record') startListeningRecord();
+  else if (mode === 'browserStt') startListeningStt();
+}
+
+async function startListeningRecord() {
+  const sid = S.id;
+  S.status = 'listening';
+  S.sttActive = false;
+  renderControls();
+  try {
+    await startRecording(() => { if (S && S.id === sid && S.status === 'listening') stopListening(); });
+  } catch (e) {
+    cancelRecording();
+    if (!S || S.id !== sid) return;
+    toast(micErrorMsg(e), 'error', 6000);
+    S.status = 'ready';
+    if (isPermissionError(e) || /MediaRecorder/.test(e.message || '')) switchInputMode('keyboard', true);
+    renderControls();
+  }
+}
+
+async function startListeningStt() {
+  const sid = S.id;
+  S.status = 'listening';
+  S.sttActive = true;
+  S.sttCancelled = false;
+  renderControls();
+  try {
+    const text = await startBrowserStt({
+      lang: 'en-US',
+      continuous: !state.settings.autoStopOnSilence,
+      onInterim: t => { const el = $('#sttInterim'); if (el) el.textContent = t || '듣는 중…'; }
+    });
+    if (!S || S.id !== sid) return;
+    S.sttActive = false;
+    if (S.sttCancelled) { S.sttCancelled = false; if (S.status === 'listening') S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
+    if (!text) { toast('인식된 말이 없어요. 다시 시도해 주세요', 'warn'); S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
+    processUserTurn({ kind: 'text', text, source: 'stt' });
+  } catch (e) {
+    if (!S || S.id !== sid) return;
+    S.sttActive = false;
+    toast(e.message || '음성 인식 오류', 'error', 6000);
+    S.status = 'ready';
+    renderControls();
+  }
+}
+
+async function stopListening() {
+  if (!S || S.status !== 'listening') return;
+  if (S.sttActive) { stopBrowserStt(); return; } // onend → 결과 처리
+  const sid = S.id;
+  S.status = 'processing';
+  renderControls();
+  const blob = await stopRecording();
+  if (!S || S.id !== sid) return;
+  if (!blob) { toast('녹음된 소리가 없어요. 다시 시도해 주세요', 'warn'); S.status = 'ready'; renderControls(); checkTimeUpWhenIdle(); return; }
+  processUserTurn({ kind: 'audio', blob });
+}
+
+function cancelListening() {
+  if (!S || S.status !== 'listening') return;
+  if (S.sttActive) { S.sttCancelled = true; abortBrowserStt(); }
+  else cancelRecording();
+  S.status = 'ready';
+  renderControls();
+  checkTimeUpWhenIdle();
+}
+
+function sendTyped() {
+  if (!S) return;
+  const el = $('#talkInput');
+  const text = (el ? el.value : S.draftText || '').trim();
+  if (!text) { toast('보낼 내용을 입력해 주세요', 'warn'); return; }
+  if (S.status === 'speaking') skipSpeech();
+  else if (S.status !== 'ready') return;
+  S.draftText = text;
+  processUserTurn({ kind: 'text', text, source: 'keyboard' });
+}
+function retryTurn() {
+  if (!S || !S.lastFailedInput || S.status !== 'ready') return;
+  processUserTurn(S.lastFailedInput);
+}
+
+function switchInputMode(mode, silent = false) {
+  if (!INPUT_MODES[mode]) return;
+  if (mode === 'browserStt' && !SR) { toast('이 브라우저는 음성 인식을 지원하지 않아요', 'warn'); return; }
+  if (S && S.status === 'listening') { toast('녹음/인식 중에는 바꿀 수 없어요', 'warn'); return; }
+  state.settings.inputMode = mode;
+  saveState();
+  if (!silent) toast(`${INPUT_MODES[mode].icon} ${INPUT_MODES[mode].label} 모드`, 'info', 1800);
+  if (mode === 'record' && S) { ensureAudioContext(); getMicStream().catch(e => { toast(`${micErrorMsg(e)} → 키보드 모드로 전환`, 'error'); switchInputMode('keyboard', true); }); }
+  if (S) renderControls();
+}
+
+function isTypingDraft() {
+  return state.settings.inputMode === 'keyboard' && !!(S?.draftText || '').trim();
+}
+function checkTimeUpWhenIdle() {
+  if (S && S.timeUp && !S.closing && S.status === 'ready' && !S.pauses.size && !isTypingDraft()) doClosing();
+}
+
+async function doClosing() {
+  if (!S || S.closing) return;
+  const sid = S.id;
+  S.closing = true;
+  S.status = 'closing';
+  renderControls();
+  let reply = '';
+  try {
+    S.abort = new AbortController();
+    const { data } = await callGemini({
+      role: S.chatRole,
+      contents: [...historyToContents(S.history), { role: 'user', parts: [{ text: "(Time's up. Say a short, natural, warm goodbye that fits our conversation — 1-2 sentences, no question.)" }] }],
+      systemInstruction: S.systemInstruction,
+      schema: CLOSING_SCHEMA,
+      thinking: 'low',
+      signal: S.abort.signal
+    });
+    reply = String(data?.reply || '').trim();
+  } catch (e) {
+    if (isAbort(e)) return;
+  }
+  if (!S || S.id !== sid) return;
+  if (!reply) reply = FALLBACK_CLOSINGS[S.stage];
+  S.history.push({ role: 'model', text: reply });
+  appendAiBubble(reply);
+  await aiSpeak(reply);
+  if (!S || S.id !== sid) return;
+  finishSession();
+}
+
+async function endSessionManual() {
+  if (!S) return;
+  S.pauses.add('confirm');
+  updateTimerUI();
+  let ok;
+  if (!S.turns.length) {
+    ok = await showConfirm({ title: '대화 종료', body: '아직 주고받은 대화가 없어 리포트를 만들 수 없어요.\n그냥 나갈까요?', okText: '나가기', danger: true });
+    if (!S) return;
+    S.pauses.delete('confirm');
+    if (ok) abortSession();
+    else updateTimerUI();
+    return;
+  }
+  ok = await showConfirm({ title: '대화 종료', body: `지금 종료하고 리포트를 받을까요? (${S.turns.length}턴 진행)`, okText: '📊 리포트 받기' });
+  if (!S) return;
+  S.pauses.delete('confirm');
+  if (ok) finishSession();
+  else { S.timer.last = performance.now(); updateTimerUI(); checkTimeUpWhenIdle(); }
+}
+
+function teardownSessionIO() {
+  if (!S) return;
+  S.abort?.abort();
+  S.ttsAbort?.abort();
+  cancelRecording();
+  if (S.sttActive) { S.sttCancelled = true; abortBrowserStt(); }
+  stopPlayback();
+  stopTimer();
+  closeModal('sos');
+}
+function abortSession() {
+  teardownSessionIO();
+  S = null;
+  releaseMic();
+  renderNav();
+  renderTalk();
+}
+
+function buildDraft(s) {
+  return {
+    id: s.id,
+    topic: s.topic,
+    stage: s.stage,
+    isRandom: s.isRandom,
+    onCooldown: s.onCooldown,
+    startedAt: s.startedAt,
+    minutes: Math.max(0.1, Math.round(s.timer.elapsedMs / 6000) / 10),
+    usedAudio: s.usedAudio,
+    openingAngle: s.openingAngle,
+    history: s.history.filter(h => h.text !== '(Session start)'),
+    turns: s.turns
+  };
+}
+
+function finishSession() {
+  if (!S) return;
+  teardownSessionIO();
+  if (!S.turns.length) {
+    toast('주고받은 대화가 없어 리포트 없이 종료했어요', 'info');
+    S = null; releaseMic(); renderNav(); renderTalk();
+    return;
+  }
+  const draft = buildDraft(S);
+  savePendingReport(draft); // 리포트 실패·새로고침에도 세션 데이터 보존
+  S = null;
+  releaseMic();
+  renderNav();
+  generateReport(draft);
+}
+
+// ===== [SECTION: HUD] =====
+const payloads = new Map();
+let payloadSeq = 0;
+function regPayload(p) { const k = `p${++payloadSeq}`; payloads.set(k, p); return k; }
+
+function dexSaveBtn(payload, label = '📌 도감에 저장') {
+  const saved = isInDex(payload.native, payload.original);
+  const pid = regPayload(payload);
+  return saved
+    ? `<button data-action="saveDex" data-pid="${pid}" data-saved="1" class="tap shrink-0 rounded-lg px-3 text-xs font-semibold border border-emerald-500/40 text-emerald-300 bg-emerald-500/10">✅ 저장됨</button>`
+    : `<button data-action="saveDex" data-pid="${pid}" class="tap shrink-0 rounded-lg px-3 text-xs font-semibold border border-amber-400/40 text-amber-200 hover:bg-amber-400/10">${esc(label)}</button>`;
+}
+
+function hudCardHtml(turn, idx, animate) {
+  const h = turn.hud;
+  const natural = /👍/.test(h.tipKo);
+  return `
+  <div class="${animate ? 'fade-in' : ''} rounded-xl border ${natural ? 'border-emerald-500/30' : 'border-slate-700/80'} bg-slate-900/80 p-3 text-sm" data-hud="${idx}">
+    <div class="flex items-start gap-2 text-slate-400"><span class="shrink-0">🗣️</span><span class="break-words">${esc(h.original || turn.transcript)}</span></div>
+    ${h.upgrade ? `<div class="flex items-start gap-2 mt-1.5 text-emerald-300 font-medium"><span class="shrink-0">✨</span><span class="break-words">${esc(h.upgrade)}</span></div>` : ''}
+    ${h.tipKo ? `<div class="flex items-start gap-2 mt-1.5 text-amber-100/90"><span class="shrink-0">💡</span><span class="break-words">${esc(h.tipKo)}</span></div>` : ''}
+    ${turn.pron ? `<div class="flex items-start gap-2 mt-1.5 text-sky-300/90"><span class="shrink-0">🔊</span><span class="break-words">${esc(turn.pron)}</span></div>` : ''}
+    <div class="flex items-center justify-between gap-2 mt-2">
+      <span class="text-[11px] text-slate-500">#${idx + 1} · ${esc(INPUT_MODES[turn.inputType === 'stt' ? 'browserStt' : turn.inputType === 'audio' ? 'record' : 'keyboard'].icon)}</span>
+      ${h.upgrade ? dexSaveBtn({ type: 'hud', original: h.original || turn.transcript, native: h.upgrade, tipKo: h.tipKo, topicId: S?.topic.id || null }) : ''}
+    </div>
+  </div>`;
+}
+
+function renderHudList() {
+  const list = $('#hudList');
+  if (!list || !S) return;
+  list.innerHTML = S.turns.length
+    ? S.turns.map((t, i) => hudCardHtml(t, i, false)).reverse().join('')
+    : `<div id="hudEmpty" class="text-xs text-slate-500 py-3 text-center">말하면 여기에 교정 카드가 소리 없이 쌓여요 · 대화는 끊기지 않아요</div>`;
+  updateHudChrome();
+}
+function addHudCard(turn, idx) {
+  const list = $('#hudList');
+  if (!list || !S) return;
+  $('#hudEmpty')?.remove();
+  list.insertAdjacentHTML('afterbegin', hudCardHtml(turn, idx, true));
+  list.scrollTop = 0;
+  if (!S.hudOpen) S.hudUnseen++;
+  updateHudChrome();
+}
+function toggleHud() {
+  if (!S) return;
+  S.hudOpen = !S.hudOpen;
+  if (S.hudOpen) S.hudUnseen = 0;
+  updateHudChrome();
+}
+function updateHudChrome() {
+  if (!S) return;
+  const list = $('#hudList'), badge = $('#hudBadge'), chev = $('#hudChevron');
+  if (list) list.classList.toggle('hidden', !S.hudOpen);
+  if (chev) chev.textContent = S.hudOpen ? '접기 ▾' : '펼치기 ▴';
+  if (badge) {
+    badge.textContent = S.hudUnseen ? `+${S.hudUnseen} 새 카드` : `${S.turns.length}`;
+    badge.className = S.hudUnseen
+      ? 'ml-2 rounded-full bg-amber-400 text-slate-950 text-[11px] font-bold px-2 py-0.5'
+      : 'ml-2 rounded-full bg-slate-800 text-slate-300 text-[11px] px-2 py-0.5';
+  }
+}
+
+// ===== [SECTION: TIMER_SOS] =====
+let timerInterval = null;
+function startTimer() {
+  stopTimer();
+  if (!S) return;
+  S.timer.last = performance.now();
+  timerInterval = setInterval(tickTimer, 250);
+  updateTimerUI();
+}
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+// 사용자가 대화하는 시간만 센다 (excludeWaitTime이면 AI 생성·TTS 로딩·재생 중 정지)
+function timerCounting() {
+  if (!S || S.pauses.size || document.hidden) return false;
+  if (S.status === 'openingFailed') return false;
+  if (state.settings.excludeWaitTime) return S.status === 'ready' || S.status === 'listening';
+  return true;
+}
+function tickTimer() {
+  if (!S) { stopTimer(); return; }
+  const now = performance.now();
+  const dt = now - S.timer.last;
+  S.timer.last = now;
+  if (timerCounting()) S.timer.elapsedMs += Math.min(dt, 1000);
+  if (S.timer.limitMs && !S.timeUp && S.timer.elapsedMs >= S.timer.limitMs) {
+    S.timer.elapsedMs = S.timer.limitMs;
+    S.timeUp = true;
+    handleTimeUp();
+  }
+  updateTimerUI();
+}
+function handleTimeUp() {
+  if (!S) return;
+  if (S.status === 'ready' && !isTypingDraft()) {
+    toast('⏰ 시간 종료! AI가 대화를 마무리해요', 'info');
+    doClosing();
+  } else if (S.status === 'listening' || isTypingDraft()) {
+    toast('⏰ 시간 종료! 지금 하던 말까지만 마무리해서 보내 주세요', 'warn', 5000);
+  } else {
+    toast('⏰ 시간 종료! 이번 응답 후 마무리할게요', 'info');
+  }
+}
+function updateTimerUI() {
+  if (!S) return;
+  const tEl = $('#timerText'), sEl = $('#timerState'), bar = $('#timerBar');
+  if (!tEl) return;
+  const lim = S.timer.limitMs;
+  const left = lim - S.timer.elapsedMs;
+  tEl.textContent = lim ? fmtClock(left, true) : fmtClock(S.timer.elapsedMs);
+  tEl.classList.toggle('text-rose-300', !!lim && left <= 30000);
+  tEl.classList.toggle('text-emerald-300', !(lim && left <= 30000));
+  if (bar) bar.style.width = lim ? `${Math.min(100, (S.timer.elapsedMs / lim) * 100)}%` : '100%';
+  if (bar) bar.classList.toggle('opacity-30', !lim);
+  let label;
+  if (S.timeUp) label = '⏰ 시간 종료';
+  else if (S.pauses.has('sos')) label = '⏸ SOS 일시정지';
+  else if (S.pauses.size) label = '⏸ 일시정지';
+  else if (timerCounting()) label = lim ? '▶ 내 대화 시간' : '∞ 무제한 · 경과';
+  else label = '⏸ AI 대기 (시간 제외)';
+  if (sEl) sEl.textContent = label;
+}
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    persistNow();
+    if (!S) return;
+    S.pauses.add('background');
+    if (S.status === 'listening') {
+      if (S.sttActive) { S.sttCancelled = true; abortBrowserStt(); } else cancelRecording();
+      S.status = 'ready';
+    }
+    skipSpeech();
+    renderControls();
+    updatePauseOverlay();
+  } else if (S && S.pauses.has('background')) {
+    updatePauseOverlay();
+    updateTimerUI();
+  }
+}
+function resumeFromBackground() {
+  ensureAudioContext();
+  if (!S) return;
+  S.pauses.delete('background');
+  S.timer.last = performance.now();
+  updatePauseOverlay();
+  updateTimerUI();
+  renderControls();
+  checkTimeUpWhenIdle();
+}
+function updatePauseOverlay() {
+  const el = $('#pauseOverlay');
+  if (!el || !S) return;
+  el.classList.toggle('hidden', !S.pauses.has('background'));
+  el.classList.toggle('flex', S.pauses.has('background'));
+}
+
+const SOS_SYSTEM = `You are an expert English coach for Korean adult learners (target: TOEIC Speaking AH / OPIc AL).
+The learner is in the middle of a spoken English conversation and wants to say something they only know how to say in Korean.
+Give 2-3 natural expressions a native speaker would actually say in that context, ordered from casual to formal when possible.
+For each: "expression" (English, ready to say out loud, fits the conversation), "register" (casual | neutral | formal), "nuanceKo" (한국어로 뉘앙스 차이와 언제 쓰는지 1~2문장), "example" (a short natural example sentence).
+Respond ONLY with JSON matching the schema.`;
+const SOS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    expressions: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          expression: { type: 'STRING' },
+          register: { type: 'STRING', enum: ['casual', 'neutral', 'formal'] },
+          nuanceKo: { type: 'STRING' },
+          example: { type: 'STRING' }
+        },
+        required: ['expression', 'register', 'nuanceKo', 'example']
+      }
+    }
+  },
+  required: ['expressions']
+};
+const REGISTER_LABEL = { casual: ['캐주얼', 'bg-sky-500/15 text-sky-300 border-sky-500/30'], neutral: ['중립', 'bg-slate-500/15 text-slate-300 border-slate-500/30'], formal: ['격식', 'bg-violet-500/15 text-violet-300 border-violet-500/30'] };
+const sos = { loading: false, listening: false, results: null };
+
+function openSos() {
+  if (!S) return;
+  if (S.status === 'listening') { toast('녹음 중에는 SOS를 열 수 없어요. 먼저 보내거나 취소해 주세요', 'warn'); return; }
+  S.pauses.add('sos');
+  skipSpeech();
+  updateTimerUI();
+  sos.results = null;
+  openModal(`
+    <div class="p-5 space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="text-lg font-bold">⏸️ SOS 표현 물어보기</h3>
+        <span class="text-[11px] rounded-full border border-amber-400/40 text-amber-200 px-2 py-0.5">타이머 정지됨</span>
+      </div>
+      <p class="text-sm text-slate-400">하고 싶은 말을 <b class="text-slate-200">한국어</b>로 적거나 말해 보세요. 원어민 표현 2~3개를 알려 드려요. (SOS 내용은 대화 기록에 남지 않아요)</p>
+      <div class="flex gap-2">
+        <textarea id="sosInput" rows="2" class="flex-1 rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2 resize-none" placeholder="예) 그건 상황에 따라 다르다고 말하고 싶어"></textarea>
+        ${SR ? `<button data-action="sosMic" id="sosMicBtn" class="tap rounded-xl border border-slate-700 bg-slate-800 px-3 text-lg" aria-label="한국어 음성 입력">🎤</button>` : ''}
+      </div>
+      <button data-action="askSos" id="sosAskBtn" class="tap w-full rounded-xl bg-amber-400 text-slate-950 font-bold">💡 원어민 표현 받기</button>
+      <div id="sosResults" class="space-y-2"></div>
+      <button data-action="closeSos" class="tap w-full rounded-xl bg-emerald-500 text-slate-950 font-bold">▶️ 대화 재개</button>
+    </div>`, { id: 'sos', dismissible: false });
+  setTimeout(() => $('#sosInput')?.focus(), 50);
+}
+function closeSos() {
+  if (sos.listening) abortBrowserStt();
+  sos.listening = false;
+  closeModal('sos');
+  if (S) {
+    S.pauses.delete('sos');
+    S.timer.last = performance.now();
+    updateTimerUI();
+    renderControls();
+    checkTimeUpWhenIdle();
+  }
+}
+async function sosMic() {
+  const input = $('#sosInput'), btn = $('#sosMicBtn');
+  if (!input) return;
+  if (sos.listening) { stopBrowserStt(); return; }
+  sos.listening = true;
+  if (btn) { btn.textContent = '⏹'; btn.classList.add('mic-live'); }
+  try {
+    const text = await startBrowserStt({ lang: 'ko-KR', continuous: false, onInterim: t => { input.value = t; } });
+    if (text) input.value = text;
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    sos.listening = false;
+    const b = $('#sosMicBtn');
+    if (b) { b.textContent = '🎤'; b.classList.remove('mic-live'); }
+  }
+}
+async function askSos() {
+  const input = $('#sosInput');
+  const q = (input?.value || '').trim();
+  if (!q) { toast('하고 싶은 말을 입력해 주세요', 'warn'); return; }
+  if (sos.loading) return;
+  sos.loading = true;
+  const box = $('#sosResults');
+  if (box) box.innerHTML = `<div class="text-sm text-slate-400 py-3 text-center"><span class="inline-block spin">⏳</span> 표현 찾는 중<span class="dots"></span></div>`;
+  const lastAi = [...(S?.history || [])].reverse().find(h => h.role === 'model')?.text || '';
+  try {
+    const { data } = await callGemini({
+      role: 'chat',
+      contents: [{ role: 'user', parts: [{ text: `Conversation topic: "${S?.topic.title || 'free talk'}" (Stage ${S?.stage || state.settings.stage}).\nMy friend just said: "${lastAi}"\nWhat I want to say (Korean): ${q}` }] }],
+      systemInstruction: SOS_SYSTEM,
+      schema: SOS_SCHEMA,
+      thinking: 'low'
+    });
+    const items = (Array.isArray(data?.expressions) ? data.expressions : []).filter(x => x && x.expression).slice(0, 3);
+    if (!items.length) throw new Error('표현을 받지 못했어요');
+    sos.results = { q, items };
+    renderSosResults();
+  } catch (e) {
+    if (box) box.innerHTML = `<div class="text-sm text-rose-300 py-2">⚠️ ${esc(e.message)} — 다시 시도해 주세요.</div>`;
+    toast(`SOS 실패: ${e.message}`, 'error');
+  } finally {
+    sos.loading = false;
+  }
+}
+function renderSosResults() {
+  const box = $('#sosResults');
+  if (!box || !sos.results) return;
+  const { q, items } = sos.results;
+  box.innerHTML = items.map(it => {
+    const [lbl, cls] = REGISTER_LABEL[it.register] || REGISTER_LABEL.neutral;
+    return `
+    <div class="fade-in rounded-xl border border-slate-700 bg-slate-950/70 p-3">
+      <div class="flex items-start justify-between gap-2">
+        <div class="font-semibold text-emerald-300 break-words">${esc(it.expression)}</div>
+        <span class="shrink-0 text-[11px] rounded-full border px-2 py-0.5 ${cls}">${lbl}</span>
+      </div>
+      <div class="text-sm text-slate-300 mt-1">${esc(it.nuanceKo)}</div>
+      ${it.example ? `<div class="text-xs text-slate-400 mt-1 italic">e.g. ${esc(it.example)}</div>` : ''}
+      <div class="flex justify-end gap-2 mt-2">
+        <button data-action="speakText" data-text="${esc(it.expression)}" class="tap rounded-lg border border-slate-700 px-3 text-xs">🔊</button>
+        ${dexSaveBtn({ type: 'sos', original: q, native: it.expression, tipKo: `[${lbl}] ${it.nuanceKo}`, topicId: S?.topic.id || null }, '📌 도감 저장')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ===== [SECTION: REPORT] =====
+const REPORT_SYSTEM = `You are a senior English speaking assessor who knows the TOEIC Speaking (levels NL~AH, 0-200) and OPIc (NL~AL) rubrics very well, and a warm, honest coach for Korean adult learners.
+Analyze the session data and respond ONLY with JSON matching the schema.
+Write every field ending in "Ko" in natural Korean. Quote the user's own sentences verbatim where asked. Grades are estimates, not official results.`;
+
+function reportSchema(isCustom) {
+  const STR = { type: 'STRING' }, INT = { type: 'INTEGER' };
+  const properties = {
+    estimatedGrade: { type: 'OBJECT', properties: { toeicSpeaking: STR, opic: STR, noteKo: STR }, required: ['toeicSpeaking', 'opic', 'noteKo'] },
+    overallScore: INT,
+    top3: { type: 'ARRAY', items: { type: 'OBJECT', properties: { mine: STR, native: STR, whyKo: STR }, required: ['mine', 'native', 'whyKo'] } },
+    keyExpressions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { expression: STR, meaningKo: STR, example: STR }, required: ['expression', 'meaningKo', 'example'] } },
+    statScores: {
+      type: 'OBJECT',
+      properties: { fluency: INT, vocab: INT, grammar: INT, logic: INT, nuance: { type: 'INTEGER', nullable: true } },
+      required: ['fluency', 'vocab', 'grammar', 'logic', 'nuance']
+    },
+    strengthsKo: STR,
+    nextFocusKo: STR,
+    sessionSummary: STR,
+    anglesCovered: { type: 'ARRAY', items: STR }
+  };
+  const required = Object.keys(properties);
+  if (isCustom) {
+    properties.trackForCustomTopic = { type: 'INTEGER', description: '1-4' };
+    properties.customTopicCard = {
+      type: 'OBJECT',
+      properties: {
+        title: STR, titleKo: STR, subtitle: STR,
+        starterQuestions: { type: 'ARRAY', items: STR },
+        keyExpressions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { en: STR, ko: STR }, required: ['en', 'ko'] } }
+      },
+      required: ['title', 'titleKo', 'subtitle', 'starterQuestions', 'keyExpressions']
+    };
+    required.push('trackForCustomTopic', 'customTopicCard');
+  }
+  return { type: 'OBJECT', properties, required };
+}
+
+function buildReportPrompt(draft) {
+  const t = draft.topic;
+  const track = TRACKS[t.track] || CUSTOM_TRACK;
+  const stg = STAGES[draft.stage];
+  const audioTurns = draft.turns.filter(x => x.inputType === 'audio').length;
+  const transcript = draft.history.map(h => `${h.role === 'model' ? 'AI' : 'USER'}: ${h.text}`).join('\n');
+  const turns = draft.turns.map((x, i) => ({
+    n: i + 1, inputType: x.inputType, user: x.transcript, hud: x.hud,
+    pronunciationNoteKo: x.pron, signals: x.signals, angle: x.angleTag
+  }));
+  return [
+    'SESSION INFO',
+    `- Stage ${draft.stage}: ${stg.name} (${stg.goal}). Style: ${stg.style}`,
+    `- Topic: ${t.title} — ${t.subtitle} (Track: ${track.name})`,
+    `- User talk time: ${draft.minutes} min, ${draft.turns.length} user turns (${audioTurns} audio, ${draft.turns.length - audioTurns} text)`,
+    draft.usedAudio
+      ? '- Audio input was used: evaluate nuance including pronunciation/intonation (see per-turn notes).'
+      : '- TEXT-ONLY session (no audio at all): set statScores.nuance to null and do not evaluate pronunciation.',
+    '',
+    'FULL TRANSCRIPT',
+    transcript,
+    '',
+    'PER-TURN DATA (JSON)',
+    JSON.stringify(turns),
+    '',
+    'TASK',
+    '- estimatedGrade: TOEIC Speaking level with score band (e.g. "AM (180~190)") and OPIc grade (e.g. "IH", "AL"). noteKo: 추정치이며 실제 시험과 다를 수 있다는 짧은 안내.',
+    '- overallScore 0-100, where 80 = a solid performance for this stage.',
+    '- top3: the user\'s 3 most improvable real sentences ("mine" quoted verbatim from USER lines), the most natural native version, and whyKo.',
+    '- keyExpressions: exactly 3 expressions worth adopting for this topic next time, with meaningKo and an example tied to what the user talked about.',
+    '- statScores 0-100 each. strengthsKo and nextFocusKo: 1-2 sentences each.',
+    '- sessionSummary: 2-3 English sentences on what was discussed (used to pick fresh angles next time).',
+    '- anglesCovered: 2-6 short English tags of the conversation angles covered.',
+    t.isTemp
+      ? `- This was a USER-DEFINED topic: "${t.userInput}". Choose trackForCustomTopic (1 = my life/routine/personal stories, 2 = everyday opinions, 3 = casual bro talk & daily situations, 4 = politics & diplomacy) and write customTopicCard: English title, Korean titleKo, Korean one-line subtitle, 3 English starterQuestions for future sessions, 4 keyExpressions {en, ko}.`
+      : ''
+  ].filter(x => x !== null).join('\n');
+}
+
+function normalizeReport(d, draft) {
+  const str = v => String(v ?? '').trim();
+  const arr = v => (Array.isArray(v) ? v : []);
+  const g = isObj(d?.estimatedGrade) ? d.estimatedGrade : {};
+  const ss = isObj(d?.statScores) ? d.statScores : {};
+  const avg = k => {
+    const v = draft.turns.map(t => t.signals?.[k]).filter(x => typeof x === 'number');
+    return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : 60;
+  };
+  const statScores = {};
+  for (const k of SIGNAL_KEYS) {
+    const v = clampInt(ss[k], 0, 100, NaN);
+    statScores[k] = Number.isFinite(v) ? v : avg(k);
+  }
+  if (!draft.usedAudio) statScores.nuance = null; // 텍스트 전용 세션은 nuance 평가 안 함
+  const vals = Object.values(statScores).filter(v => v != null);
+  return {
+    estimatedGrade: {
+      toeicSpeaking: str(g.toeicSpeaking) || '—',
+      opic: str(g.opic) || '—',
+      noteKo: str(g.noteKo) || 'AI 추정치이며 실제 시험 결과와 다를 수 있어요.'
+    },
+    overallScore: clampInt(d?.overallScore, 0, 100, Math.round(vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length))),
+    top3: arr(d?.top3).filter(x => x && x.native).slice(0, 3).map(x => ({ mine: str(x.mine), native: str(x.native), whyKo: str(x.whyKo) })),
+    keyExpressions: arr(d?.keyExpressions).filter(x => x && x.expression).slice(0, 3).map(x => ({ expression: str(x.expression), meaningKo: str(x.meaningKo), example: str(x.example) })),
+    statScores,
+    strengthsKo: str(d?.strengthsKo),
+    nextFocusKo: str(d?.nextFocusKo),
+    sessionSummary: str(d?.sessionSummary),
+    anglesCovered: arr(d?.anglesCovered).map(str).filter(Boolean).slice(0, 8),
+    trackForCustomTopic: d?.trackForCustomTopic != null ? clampInt(d.trackForCustomTopic, 1, 4, 1) : null,
+    customTopicCard: isObj(d?.customTopicCard) ? d.customTopicCard : null
+  };
+}
+
+// exp = round(대화분수 × 10 × (overallScore / 80) × 랜덤보너스(1.3|1) × 쿨타임감소(0.5|1))
+function calcExp(minutes, score, isRandom, onCooldown) {
+  return Math.max(0, Math.round(minutes * 10 * (score / 80) * (isRandom ? 1.3 : 1) * (onCooldown ? 0.5 : 1)));
+}
+
+function buildCustomTopic(draft, report) {
+  const c = report.customTopicCard || {};
+  const input = draft.topic.userInput || draft.topic.title;
+  return normalizeTopic({
+    id: uid('custom'),
+    track: report.trackForCustomTopic || 1,
+    title: c.title || input.slice(0, 60),
+    titleKo: c.titleKo || input.slice(0, 40),
+    subtitle: c.subtitle || input,
+    starterQuestions: c.starterQuestions,
+    keyExpressions: c.keyExpressions,
+    createdAt: Date.now(),
+    source: 'custom'
+  }, 'custom');
+}
+
+function applyReport(draft, report) {
+  const existing = state.sessions.find(s => s.id === draft.id);
+  if (existing) return { exp: existing.expGained, topicId: existing.topicId, newTopic: null, duplicate: true };
+  let topicId = draft.topic.id;
+  let newTopic = null;
+  if (draft.topic.isTemp) {
+    newTopic = buildCustomTopic(draft, report);
+    state.customTopics.push(newTopic);
+    topicId = newTopic.id;
+    state.dex.forEach(x => { if (x.topicId === draft.topic.id) x.topicId = topicId; });
+  }
+  const exp = calcExp(draft.minutes, report.overallScore, draft.isRandom, draft.onCooldown);
+  const tp = state.topicProgress[topicId] || (state.topicProgress[topicId] = emptyProgress());
+  tp.clearCount += 1;
+  tp.lastClearedAt = Date.now();
+  if (report.sessionSummary) tp.summaries = [...tp.summaries, report.sessionSummary].slice(-5);
+  tp.anglesCovered = uniq([...tp.anglesCovered, ...report.anglesCovered, draft.openingAngle, ...draft.turns.map(t => t.angleTag)].filter(Boolean)).slice(-40);
+  state.profile.exp += exp;
+  state.sessions.unshift({
+    id: draft.id,
+    topicId,
+    topicTitle: newTopic ? newTopic.title : draft.topic.title,
+    stage: draft.stage,
+    startedAt: draft.startedAt,
+    minutes: draft.minutes,
+    score: report.overallScore,
+    expGained: exp,
+    reportSummary: {
+      toeicSpeaking: report.estimatedGrade.toeicSpeaking,
+      opic: report.estimatedGrade.opic,
+      statScores: report.statScores,
+      strengthsKo: report.strengthsKo,
+      nextFocusKo: report.nextFocusKo,
+      turns: draft.turns.length,
+      usedAudio: draft.usedAudio,
+      isRandom: draft.isRandom,
+      onCooldown: draft.onCooldown
+    }
+  });
+  state.sessions = state.sessions.slice(0, MAX_SESSIONS);
+  saveState();
+  return { exp, topicId, newTopic, duplicate: false };
+}
+
+async function generateReport(draft) {
+  if (!draft) return;
+  talk.pending = null;
+  talk.report = { status: 'loading', draft };
+  switchView('talk');
+  renderTalk();
+  try {
+    const { data, model } = await callGemini({
+      role: 'analysis',
+      contents: [{ role: 'user', parts: [{ text: buildReportPrompt(draft) }] }],
+      systemInstruction: REPORT_SYSTEM,
+      schema: reportSchema(!!draft.topic.isTemp),
+      thinking: 'high'
+    });
+    const report = normalizeReport(data, draft);
+    const result = applyReport(draft, report);
+    clearPendingReport();
+    talk.report = { status: 'done', draft, report, model, ...result };
+    renderHeader();
+    renderNav();
+    if (currentView === 'talk') { renderTalk(); celebrateExp(result.exp); }
+    else toast(`📊 리포트 완료! +${result.exp} EXP`, 'success');
+  } catch (e) {
+    talk.report = { status: 'error', draft, error: e.message };
+    if (currentView === 'talk') renderTalk();
+    toast(`리포트 생성 실패: ${e.message} (세션 데이터는 보존돼요)`, 'error', 7000);
+  }
+}
+
+async function discardReport() {
+  const ok = await showConfirm({ title: '리포트 버리기', body: '이 세션의 리포트와 EXP를 받지 않고 기록을 버릴까요?', okText: '버리기', danger: true });
+  if (!ok) return;
+  clearPendingReport();
+  talk.report = null;
+  renderTalk();
+}
+
+function celebrateExp(exp) {
+  const el = $('#expCount');
+  if (!el) return;
+  const start = performance.now(), dur = 1300;
+  const step = now => {
+    const p = Math.min(1, (now - start) / dur);
+    el.textContent = Math.round(exp * (1 - Math.pow(1 - p, 3))).toLocaleString();
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  const box = $('#expBox');
+  if (!box) return;
+  const r = box.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  for (let i = 0; i < 28; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const ang = Math.random() * Math.PI * 2, dist = 60 + Math.random() * 140;
+    p.style.left = `${cx}px`;
+    p.style.top = `${cy}px`;
+    p.style.setProperty('--dx', `${Math.cos(ang) * dist}px`);
+    p.style.setProperty('--dy', `${Math.sin(ang) * dist - 40}px`);
+    p.style.animationDelay = `${Math.random() * 0.25}s`;
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 1700);
+  }
+}
+
+// ===== [SECTION: DEX] =====
+const dexUi = { q: '', type: 'all', topic: 'all' };
+const DEX_TYPE_LABEL = { hud: '⚡ HUD', sos: '⏸️ SOS', report: '📊 리포트' };
+
+function isInDex(native, original) {
+  const n = String(native || '').trim(), o = String(original || '').trim();
+  return state.dex.some(d => d.native === n && d.original === o);
+}
+function addToDex({ type, original, native, tipKo, topicId }) {
+  native = String(native || '').trim();
+  original = String(original || '').trim();
+  if (!native) return null;
+  const exists = state.dex.find(d => d.native === native && d.original === original);
+  if (exists) return exists.id;
+  const item = {
+    id: uid('dex'), type: DEX_TYPE_LABEL[type] ? type : 'hud',
+    original, native, tipKo: String(tipKo || '').trim(), topicId: topicId || null,
+    createdAt: Date.now(), box: 1, lastReviewedAt: null, reviewCount: 0
+  };
+  state.dex.unshift(item);
+  saveState();
+  renderNav();
+  return item.id;
+}
+function saveDexFromButton(el) {
+  if (el.dataset.saved) return;
+  const p = payloads.get(el.dataset.pid);
+  if (!p) return;
+  if (addToDex(p)) {
+    el.dataset.saved = '1';
+    el.textContent = '✅ 저장됨';
+    el.className = 'tap shrink-0 rounded-lg px-3 text-xs font-semibold border border-emerald-500/40 text-emerald-300 bg-emerald-500/10';
+    toast('📌 도감에 저장했어요', 'success', 1600);
+  }
+}
+async function deleteDex(id) {
+  const item = state.dex.find(d => d.id === id);
+  if (!item) return;
+  const ok = await showConfirm({ title: '도감에서 삭제', body: `"${item.native}"\n이 표현을 삭제할까요?`, okText: '삭제', danger: true });
+  if (!ok) return;
+  state.dex = state.dex.filter(d => d.id !== id);
+  saveState();
+  renderNav();
+  renderDex();
+}
+
+function renderDex() {
+  const root = $('#view-dex');
+  const topicIds = uniq(state.dex.map(d => d.topicId).filter(Boolean));
+  if (dexUi.topic !== 'all' && !topicIds.includes(dexUi.topic)) dexUi.topic = 'all';
+  const sel = 'rounded-xl bg-slate-900 border border-slate-700 px-3 h-11';
+  root.innerHTML = `
+  <div class="max-w-4xl mx-auto p-4 md:p-6 space-y-4">
+    <div>
+      <h2 class="text-2xl font-bold">📚 표현 도감</h2>
+      <p class="text-sm text-slate-400">저장한 표현 ${state.dex.length}개 · 블라인드 복습 퀴즈는 다음 업데이트에서 열려요</p>
+    </div>
+    <div class="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+      <input data-input="dexSearch" value="${esc(dexUi.q)}" placeholder="🔍 검색 (영어/한국어)" class="${sel} outline-none focus:border-emerald-400" autocapitalize="off">
+      <select data-change="dexType" class="${sel}">
+        ${[['all', '전체 유형'], ['hud', DEX_TYPE_LABEL.hud], ['sos', DEX_TYPE_LABEL.sos], ['report', DEX_TYPE_LABEL.report]].map(([v, l]) => `<option value="${v}" ${dexUi.type === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+      <select data-change="dexTopic" class="${sel} max-w-full sm:max-w-[220px]">
+        <option value="all">전체 토픽</option>
+        ${topicIds.map(id => `<option value="${esc(id)}" ${dexUi.topic === id ? 'selected' : ''}>${esc(getTopic(id)?.title || '삭제된/임시 토픽')}</option>`).join('')}
+      </select>
+    </div>
+    <div id="dexList" class="space-y-2"></div>
+  </div>`;
+  renderDexList();
+}
+function renderDexList() {
+  const box = $('#dexList');
+  if (!box) return;
+  const q = dexUi.q.trim().toLowerCase();
+  const items = state.dex
+    .filter(d => dexUi.type === 'all' || d.type === dexUi.type)
+    .filter(d => dexUi.topic === 'all' || d.topicId === dexUi.topic)
+    .filter(d => !q || `${d.original} ${d.native} ${d.tipKo}`.toLowerCase().includes(q))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  if (!items.length) {
+    box.innerHTML = `<div class="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400 text-sm">${state.dex.length ? '조건에 맞는 표현이 없어요' : '아직 저장한 표현이 없어요.<br>대화 중 HUD 카드·SOS·리포트에서 📌 버튼을 눌러 모아 보세요.'}</div>`;
+    return;
+  }
+  box.innerHTML = items.map(d => `
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+      <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+        <span class="truncate">${DEX_TYPE_LABEL[d.type]} · ${esc(getTopic(d.topicId)?.title || '자유 대화')}</span>
+        <span class="shrink-0">${fmtDate(d.createdAt)}</span>
+      </div>
+      ${d.original ? `<div class="mt-2 text-sm text-slate-400 break-words">${esc(d.original)}</div>` : ''}
+      <div class="text-emerald-300 font-semibold text-base mt-1 break-words">→ ${esc(d.native)}</div>
+      ${d.tipKo ? `<div class="text-sm text-amber-100/90 mt-1 break-words">💡 ${esc(d.tipKo)}</div>` : ''}
+      <div class="flex justify-end gap-2 mt-3">
+        <button data-action="speakText" data-text="${esc(d.native)}" class="tap rounded-lg border border-slate-700 px-3 text-sm">🔊 듣기</button>
+        <button data-action="deleteDex" data-id="${esc(d.id)}" class="tap rounded-lg border border-slate-800 px-3 text-sm text-slate-400 hover:text-rose-300">🗑 삭제</button>
+      </div>
+    </div>`).join('');
+}
+
+// ===== [SECTION: UI_RENDER] =====
+const NAV = [
+  { id: 'topics', icon: 'map', emoji: '🗺️', label: '토픽' },
+  { id: 'talk', icon: 'mic', emoji: '🎙️', label: '대화' },
+  { id: 'dex', icon: 'book-open', emoji: '📚', label: '도감' },
+  { id: 'records', icon: 'bar-chart-3', emoji: '📊', label: '기록' }
+];
+let currentView = 'topics';
+const ui = { openTracks: new Set(), customDraft: '' };
+
+function refreshIcons() {
+  try { window.lucide?.createIcons?.(); } catch {}
+}
+
+function toast(msg, type = 'info', ms = 3500) {
+  const root = $('#toastRoot');
+  if (!root) return;
+  const colors = {
+    info: 'border-slate-600 bg-slate-800/95 text-slate-100',
+    success: 'border-emerald-500/50 bg-emerald-950/95 text-emerald-100',
+    warn: 'border-amber-400/50 bg-amber-950/95 text-amber-100',
+    error: 'border-rose-500/50 bg-rose-950/95 text-rose-100'
+  };
+  const el = document.createElement('div');
+  el.className = `toast-in pointer-events-auto max-w-md w-full rounded-xl border px-4 py-2.5 text-sm shadow-xl backdrop-blur ${colors[type] || colors.info}`;
+  el.textContent = msg;
+  el.addEventListener('click', () => el.remove());
+  root.appendChild(el);
+  while (root.children.length > 4) root.firstChild.remove();
+  setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, ms);
+}
+function toastOnce(key, msg, type = 'info', windowMs = 30000) {
+  const last = runtime.toastOnce.get(key) || 0;
+  if (Date.now() - last < windowMs) return;
+  runtime.toastOnce.set(key, Date.now());
+  toast(msg, type, 5000);
+}
+
+const modalStack = [];
+function openModal(html, { id = uid('m'), dismissible = true, size = 'md', onClose } = {}) {
+  closeModal(id);
+  const wrap = document.createElement('div');
+  wrap.dataset.modalId = id;
+  wrap.className = 'fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/70 backdrop-blur-sm sm:p-4';
+  wrap.innerHTML = `<div class="sheet-in w-full ${size === 'lg' ? 'sm:max-w-2xl' : 'sm:max-w-md'} max-h-[92vh] overflow-y-auto scroll-thin bg-slate-900 border border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl" style="padding-bottom: var(--sab)">${html}</div>`;
+  if (dismissible) wrap.addEventListener('click', e => { if (e.target === wrap) closeModal(id); });
+  $('#modalRoot').appendChild(wrap);
+  modalStack.push({ id, onClose, el: wrap, dismissible });
+  refreshIcons();
+  return id;
+}
+function closeModal(id) {
+  const i = id ? modalStack.findIndex(m => m.id === id) : modalStack.length - 1;
+  if (i < 0) return;
+  const [m] = modalStack.splice(i, 1);
+  m.el.remove();
+  m.onClose && m.onClose();
+}
+function closeTopModal() {
+  const top = modalStack[modalStack.length - 1];
+  if (!top) return;
+  if (top.id === 'sos') closeSos(); else closeModal(top.id);
+}
+function showConfirm({ title, body, okText = '확인', cancelText = '취소', danger = false }) {
+  return new Promise(resolve => {
+    const id = uid('cf');
+    let done = false;
+    const finish = v => { if (done) return; done = true; closeModal(id); resolve(v); };
+    openModal(`
+      <div class="p-5">
+        <h3 class="text-lg font-bold">${esc(title)}</h3>
+        <p class="text-sm text-slate-300 mt-2 whitespace-pre-line">${esc(body)}</p>
+        <div class="grid grid-cols-2 gap-2 mt-5">
+          <button data-cf="0" class="tap rounded-xl border border-slate-700 bg-slate-800">${esc(cancelText)}</button>
+          <button data-cf="1" class="tap rounded-xl font-bold ${danger ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-slate-950'}">${esc(okText)}</button>
+        </div>
+      </div>`, { id, onClose: () => { if (!done) { done = true; resolve(false); } } });
+    const entry = modalStack.find(m => m.id === id);
+    entry.el.querySelectorAll('[data-cf]').forEach(b => b.addEventListener('click', () => finish(b.dataset.cf === '1')));
+  });
+}
+
+function renderHeader() {
+  const st = state.settings, stg = STAGES[st.stage];
+  const nav = NAV.find(n => n.id === currentView);
+  $('#header').innerHTML = `
+  <div class="flex items-center gap-2 px-3 md:px-5 h-14">
+    <div class="md:hidden flex items-center gap-1 font-black tracking-tight shrink-0"><span class="text-lg">⚔️</span><span class="text-emerald-300">Speak</span><span class="text-amber-300">Tactics</span></div>
+    <div class="hidden md:block text-sm text-slate-400">${nav ? `${nav.emoji} ${nav.label}` : ''}</div>
+    <div class="ml-auto flex items-center gap-1.5 min-w-0">
+      <button data-action="goStageTopics" class="h-9 shrink-0 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 px-2.5 text-xs font-semibold" title="${esc(stg.name)}">${stg.icon} S${st.stage}<span class="hidden lg:inline"> · ${esc(stg.name)}</span></button>
+      <div class="h-9 shrink-0 flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 text-amber-200 px-2.5 text-xs font-bold">✨ ${state.profile.exp.toLocaleString()}<span class="hidden sm:inline ml-1">EXP</span></div>
+      <button data-action="openSettings" class="h-9 min-w-0 max-w-[96px] sm:max-w-[200px] truncate rounded-full border border-slate-700 bg-slate-900 text-slate-300 px-2.5 text-[11px] font-mono" title="현재 회화 모델">💬 ${esc(st.models.chat)}</button>
+      <button data-action="openSettings" class="tap shrink-0 rounded-xl hover:bg-slate-800 text-lg" aria-label="설정">⚙️</button>
+    </div>
+  </div>`;
+}
+
+function renderCornerBadge() {
+  const el = $('#cornerBadge');
+  const r = runtime.lastResponder;
+  if (!el) return;
+  if (!r) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const tm = $('#talkModel');
+  if (tm && r.role !== 'analysis') { tm.textContent = r.model + (r.fallbackUsed ? ' · 폴백' : ''); tm.classList.toggle('text-amber-300', r.fallbackUsed); }
+  el.innerHTML = `<div class="rounded-full border ${r.fallbackUsed ? 'border-amber-400/50 text-amber-200' : 'border-slate-700 text-slate-400'} bg-slate-950/85 backdrop-blur px-2.5 py-1 text-[10px] font-mono opacity-90">${r.role === 'analysis' ? '🧠' : '💬'} ${esc(r.model)}${r.fallbackUsed ? ' · 폴백' : ''}</div>`;
+}
+
+function renderNav() {
+  const live = !!S;
+  $('#sideNav').innerHTML = NAV.map(n => `
+    <button data-action="nav" data-view="${n.id}" class="tap flex items-center gap-3 px-3 rounded-xl text-sm border ${currentView === n.id ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'text-slate-300 hover:bg-slate-800/70 border-transparent'}">
+      <i data-lucide="${n.icon}" class="w-4 h-4"></i><span>${n.emoji} ${n.label}</span>
+      ${n.id === 'talk' && live ? '<span class="ml-auto w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>' : ''}
+      ${n.id === 'dex' ? `<span class="ml-auto text-[11px] text-slate-500">${state.dex.length}</span>` : ''}
+    </button>`).join('');
+  $('#tabbar').innerHTML = NAV.map(n => `
+    <button data-action="nav" data-view="${n.id}" class="tap relative flex flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] ${currentView === n.id ? 'text-emerald-300' : 'text-slate-400'}">
+      <i data-lucide="${n.icon}" class="w-5 h-5"></i><span>${n.label}</span>
+      ${n.id === 'talk' && live ? '<span class="absolute top-1.5 right-[28%] w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>' : ''}
+    </button>`).join('');
+  refreshIcons();
+}
+
+function updateMainScroll() {
+  const lock = currentView === 'talk' && !!S;
+  document.body.classList.toggle('talk-live', lock);
+  const main = $('#main');
+  main.classList.toggle('overflow-hidden', lock);
+  main.classList.toggle('overflow-y-auto', !lock);
+}
+function switchView(v) {
+  if (!NAV.some(n => n.id === v)) v = 'topics';
+  const changed = currentView !== v;
+  currentView = v;
+  for (const n of NAV) $(`#view-${n.id}`).classList.toggle('hidden', n.id !== v);
+  if (v === 'topics') renderTopics();
+  else if (v === 'dex') renderDex();
+  else if (v === 'records') renderRecords();
+  else if (v === 'talk' && (!S || !$('#chatLog'))) renderTalk();
+  updateMainScroll();
+  if (changed && v !== 'talk') $('#main').scrollTop = 0;
+  renderNav();
+  renderHeader();
+}
+
+// ---- 토픽 화면 ----
+const BADGE = {
+  gold: 'rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30 px-2 py-0.5 text-[11px] font-semibold',
+  slate: 'rounded-full bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 text-[11px]',
+  sky: 'rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/30 px-2 py-0.5 text-[11px]',
+  rose: 'rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/30 px-2 py-0.5 text-[11px]',
+  emerald: 'rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[11px]'
+};
+function topicCardHtml(t, big) {
+  const tp = topicProgressOf(t.id);
+  const cd = cooldownLeftMs(t.id);
+  const mine = t.source === 'custom' || t.source === 'ai';
+  const badges = [
+    tp.clearCount ? `<span class="${BADGE.gold}">★ ${tp.clearCount}회차</span>` : '',
+    cd ? `<span class="${BADGE.slate}">⏳ ${fmtCooldown(cd)}</span>` : '',
+    mine ? `<span class="${BADGE.sky}">✍️ 내 토픽</span>` : ''
+  ].join('');
+  return `
+  <div role="button" tabindex="0" data-action="pickTopic" data-id="${esc(t.id)}"
+       class="relative text-left rounded-2xl border ${cd ? 'border-slate-800 opacity-75' : 'border-slate-700/80 hover:border-emerald-400/60 hover:bg-slate-900'} bg-slate-900/70 ${big ? 'p-4 min-h-[108px]' : 'p-3 min-h-[64px]'} transition focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="font-semibold ${big ? 'text-base' : 'text-sm'} text-slate-100 leading-snug">${esc(t.title)}</div>
+        <div class="${big ? 'text-sm' : 'text-xs'} text-emerald-300/80 mt-0.5">${esc(t.titleKo)}</div>
+      </div>
+      <div class="flex flex-wrap justify-end gap-1 shrink-0 max-w-[45%]">${badges}</div>
+    </div>
+    ${big ? `<p class="text-xs text-slate-400 mt-2 ${mine ? 'pr-10' : ''}">${esc(t.subtitle)}</p>` : ''}
+    ${mine ? `<button data-action="deleteCustomTopic" data-id="${esc(t.id)}" class="tap absolute bottom-0 right-0 text-slate-500 hover:text-rose-300 text-sm" aria-label="내 토픽 삭제">🗑</button>` : ''}
+  </div>`;
+}
+function trackSectionBig(n) {
+  const tr = TRACKS[n];
+  const list = allTopics().filter(t => t.track === n);
+  return `
+  <section>
+    <div class="flex items-end justify-between gap-2 mb-3">
+      <div>
+        <h2 class="text-lg md:text-xl font-bold">${tr.emoji} Track ${n} — ${esc(tr.name)}</h2>
+        <div class="text-xs text-slate-400 mt-0.5">${esc(tr.nameKo)} · ${list.length}개</div>
+      </div>
+      <span class="${BADGE.emerald} shrink-0">${tr.tag}</span>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3">${list.map(t => topicCardHtml(t, true)).join('')}</div>
+  </section>`;
+}
+function trackSectionSmall(n) {
+  const tr = TRACKS[n];
+  const list = allTopics().filter(t => t.track === n);
+  return `
+  <details data-track="${n}" class="rounded-2xl border border-slate-800 bg-slate-900/40" ${ui.openTracks.has(n) ? 'open' : ''}>
+    <summary class="tap flex items-center justify-between gap-2 px-4 py-2.5">
+      <span class="text-sm font-semibold">${tr.emoji} Track ${n} — ${esc(tr.name)} <span class="text-xs text-slate-500 font-normal">· ${tr.tag} · ${list.length}개</span></span>
+      <span class="chev transition text-slate-400">▾</span>
+    </summary>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 px-3 pb-3">${list.map(t => topicCardHtml(t, false)).join('')}</div>
+  </details>`;
+}
+function renderTopics() {
+  const st = state.settings;
+  const stg = STAGES[st.stage];
+  $('#view-topics').innerHTML = `
+  <div class="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+      ${[1, 2, 3, 4].map(n => {
+        const s = STAGES[n], on = st.stage === n;
+        return `<button data-action="setStage" data-stage="${n}" class="tap text-left rounded-2xl border p-3 transition ${on ? 'border-emerald-400/70 bg-emerald-500/10 glow-emerald' : 'border-slate-800 bg-slate-900/60 hover:border-slate-600'}">
+          <div class="text-xs ${on ? 'text-emerald-300' : 'text-slate-500'}">${s.icon} ${s.label}</div>
+          <div class="text-sm font-semibold leading-snug mt-0.5">${esc(s.name)}</div>
+          <div class="text-[11px] ${on ? 'text-amber-300' : 'text-slate-500'} mt-0.5">${esc(s.goal)}</div>
+        </button>`;
+      }).join('')}
+    </div>
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-sm text-slate-300">${stg.icon} <b>${esc(stg.name)}</b> — ${esc(stg.desc)}</div>
+
+    <div class="grid md:grid-cols-[1.4fr_1fr] gap-3">
+      <div class="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
+        <div class="text-sm font-semibold mb-2">✍️ 오늘 겪은 일 / 대화하고 싶은 주제 직접 입력</div>
+        <div class="flex gap-2">
+          <input id="customTopicInput" data-input="customTopic" value="${esc(ui.customDraft)}" maxlength="200" placeholder="예) 오늘 헬스장에서 PT 쌤이랑 싸운 일 / my first marathon" class="flex-1 min-w-0 rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 h-11">
+          <button data-action="startCustomTopic" class="tap shrink-0 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4">대화 시작</button>
+        </div>
+        <div class="text-[11px] text-slate-500 mt-2">한국어·영어 모두 OK · 대화 후 리포트가 트랙을 정해 내 토픽 카드로 저장해요</div>
+      </div>
+      <div class="rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-400/10 to-transparent p-4 flex flex-col gap-2">
+        <button data-action="smartRandom" class="tap w-full rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-base glow-gold">🎲 스마트 랜덤 뽑기 (+30% EXP)</button>
+        <label class="flex items-center gap-2 text-sm text-slate-300 min-h-[44px]">
+          <input type="checkbox" data-change="setting" data-key="onlyCoreTracksInRandom" ${st.onlyCoreTracksInRandom ? 'checked' : ''} class="w-5 h-5 accent-emerald-500">
+          🏠 일상/내 생각(Track 1·2)에서만
+        </label>
+        <div class="text-[11px] text-slate-500 -mt-1">해제 시 70% Track 1·2 / 30% Track 3·4 · 쿨타임 없는 토픽만</div>
+      </div>
+    </div>
+
+    ${trackSectionBig(1)}
+    ${trackSectionBig(2)}
+    <div class="space-y-2 pt-1">
+      <div class="text-xs text-slate-500 px-1">서브 · 스페셜 트랙</div>
+      ${trackSectionSmall(3)}
+      ${trackSectionSmall(4)}
+    </div>
+    <div class="h-4"></div>
+  </div>`;
+}
+
+async function pickTopic(id) {
+  if (S) { toast('진행 중인 대화가 있어요. 먼저 종료해 주세요', 'warn'); switchView('talk'); return; }
+  const topic = getTopic(id);
+  if (!topic) { toast('토픽을 찾을 수 없어요', 'error'); return; }
+  const left = cooldownLeftMs(id);
+  let onCooldown = false;
+  if (left > 0) {
+    const ok = await showConfirm({
+      title: '⏳ 쿨타임 중인 토픽',
+      body: `이 토픽은 ${fmtCooldown(left)} 후에 쿨타임이 끝나요.\n지금 진행하면 경험치가 50%만 지급돼요. 계속할까요?`,
+      okText: '경험치 50%로 진행'
+    });
+    if (!ok) return;
+    onCooldown = true;
+  }
+  openSetup(topic, { isRandom: false, onCooldown });
+}
+function smartRandom() {
+  if (S) { toast('진행 중인 대화가 있어요. 먼저 종료해 주세요', 'warn'); switchView('talk'); return; }
+  const onlyCore = state.settings.onlyCoreTracksInRandom;
+  const all = allTopics();
+  const available = all.filter(t => cooldownLeftMs(t.id) === 0);
+  const core = available.filter(t => t.track <= 2), sub = available.filter(t => t.track >= 3);
+  let pool;
+  if (onlyCore) pool = core;
+  else pool = Math.random() < 0.7 ? (core.length ? core : sub) : (sub.length ? sub : core);
+  if (!pool.length) {
+    const cands = (onlyCore ? all.filter(t => t.track <= 2) : all).slice().sort((a, b) => cooldownLeftMs(a.id) - cooldownLeftMs(b.id));
+    const soon = cands[0];
+    toast(soon ? `뽑을 수 있는 토픽이 없어요. 가장 먼저 열리는 토픽: "${soon.title}" (⏳ ${fmtCooldown(cooldownLeftMs(soon.id))})` : '토픽이 없어요', 'warn', 7000);
+    return;
+  }
+  const topic = pool[Math.floor(Math.random() * pool.length)];
+  toast(`🎲 ${topic.title} 당첨! (+30% EXP)`, 'success');
+  openSetup(topic, { isRandom: true, onCooldown: false });
+}
+function startCustomTopic() {
+  if (S) { toast('진행 중인 대화가 있어요. 먼저 종료해 주세요', 'warn'); switchView('talk'); return; }
+  const text = ($('#customTopicInput')?.value || ui.customDraft || '').trim();
+  if (!text) { toast('대화하고 싶은 주제를 입력해 주세요', 'warn'); $('#customTopicInput')?.focus(); return; }
+  ui.customDraft = '';
+  openSetup({
+    id: uid('temp'), track: 0, isTemp: true, userInput: text,
+    title: text, titleKo: '', subtitle: '직접 입력한 주제 · 대화 후 리포트에서 트랙이 정해져요',
+    starterQuestions: [], keyExpressions: [], source: 'temp'
+  });
+}
+async function deleteCustomTopic(id) {
+  const t = state.customTopics.find(x => x.id === id);
+  if (!t) return;
+  const ok = await showConfirm({ title: '내 토픽 삭제', body: `"${t.title}" 카드를 삭제할까요?\n(이 토픽으로 저장한 도감 표현은 유지돼요)`, okText: '삭제', danger: true });
+  if (!ok) return;
+  state.customTopics = state.customTopics.filter(x => x.id !== id);
+  delete state.topicProgress[id];
+  saveState();
+  renderTopics();
+}
+
+// ---- 대화 화면 ----
+function toggleRow(key, title, desc) {
+  return `
+  <label class="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 min-h-[48px]">
+    <span class="min-w-0"><span class="text-sm">${title}</span>${desc ? `<span class="block text-[11px] text-slate-500">${desc}</span>` : ''}</span>
+    <input type="checkbox" data-change="setting" data-key="${key}" ${state.settings[key] ? 'checked' : ''} class="w-5 h-5 shrink-0 accent-emerald-500">
+  </label>`;
+}
+
+function setupHtml(p) {
+  const t = p.topic, st = state.settings, stg = STAGES[st.stage];
+  const tr = TRACKS[t.track] || CUSTOM_TRACK;
+  const tp = topicProgressOf(t.id);
+  const deep = st.useAnalysisModelForDeepTalk && st.stage >= 3 && t.track === 4;
+  const modes = Object.entries(INPUT_MODES).filter(([k]) => k !== 'browserStt' || SR);
+  return `
+  <div class="max-w-3xl mx-auto p-4 md:p-6 space-y-4">
+    <button data-action="cancelSetup" class="tap text-sm text-slate-400 hover:text-slate-200">← 토픽 목록</button>
+    <div class="rounded-2xl border border-emerald-500/30 bg-slate-900/80 p-5 glow-emerald">
+      <div class="text-xs text-slate-400">${tr.emoji} ${t.track ? `Track ${t.track} · ` : ''}${esc(tr.nameKo)}</div>
+      <h2 class="text-2xl font-bold mt-1 break-words">${esc(t.title)}</h2>
+      ${t.titleKo && t.titleKo !== t.title ? `<div class="text-emerald-300/90">${esc(t.titleKo)}</div>` : ''}
+      <p class="text-sm text-slate-400 mt-1">${esc(t.subtitle)}</p>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <span class="${BADGE.emerald}">${stg.icon} ${stg.label} · ${esc(stg.name)}</span>
+        ${tp.clearCount ? `<span class="${BADGE.gold}">★ ${tp.clearCount}회차 → 새로운 각도로 시작</span>` : ''}
+        ${p.isRandom ? `<span class="${BADGE.gold}">🎲 랜덤 보너스 +30% EXP</span>` : ''}
+        ${p.onCooldown ? `<span class="${BADGE.rose}">⏳ 쿨타임 · EXP 50%</span>` : ''}
+      </div>
+      ${t.keyExpressions.length ? `
+      <div class="mt-4">
+        <div class="text-xs text-slate-400 mb-2">🗡️ 오늘의 무기 — 대화 중에 자연스럽게 써 보세요</div>
+        <div class="grid sm:grid-cols-2 gap-2">${t.keyExpressions.map(k => `
+          <div class="rounded-lg bg-slate-950/60 border border-slate-800 px-3 py-2 text-sm"><div class="text-slate-100">${esc(k.en)}</div><div class="text-xs text-slate-400">${esc(k.ko)}</div></div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+      <div>
+        <div class="text-sm font-semibold mb-2">⏱️ 타이머 <span class="text-xs text-slate-500 font-normal">(내가 말하는 시간 기준)</span></div>
+        <div class="grid grid-cols-5 gap-2">${TIMER_PRESETS.map(m => `
+          <button data-action="setTimer" data-min="${m}" class="tap rounded-xl border text-sm font-semibold ${st.timerPreset === m ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200' : 'border-slate-700 bg-slate-950/50 text-slate-300'}">${m ? `${m}분` : '무제한'}</button>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="text-sm font-semibold mb-2">🎛️ 입력 방식</div>
+        <div class="grid gap-2">${modes.map(([k, m]) => `
+          <button data-action="setInputMode" data-mode="${k}" class="tap text-left rounded-xl border px-3 py-2.5 ${st.inputMode === k ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/50'}">
+            <div class="text-sm font-semibold">${m.icon} ${m.label}${k === 'record' ? ' <span class="text-[11px] text-emerald-300 font-normal">기본 · 아이폰 권장</span>' : ''}${k === 'browserStt' ? ' <span class="text-[11px] text-amber-300 font-normal">발음 평가 불가</span>' : ''}</div>
+            <div class="text-xs text-slate-400">${m.desc}</div>
+          </button>`).join('')}
+        </div>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-2">
+        ${toggleRow('showSubtitles', '💬 AI 자막 표시', '끄면 듣기만으로 대화 (리스닝 훈련)')}
+        ${toggleRow('autoStopOnSilence', '🤫 무음 2초 자동 전송', '녹음 모드에서 말이 끝나면 자동 전송')}
+        ${toggleRow('excludeWaitTime', '⏸ AI 대기 시간 제외', 'AI 생성·음성 재생 중엔 타이머 정지')}
+      </div>
+      <div class="text-xs text-slate-500">💬 회화 모델 <span class="font-mono text-slate-300">${esc(modelForRole(deep ? 'analysis' : 'chat'))}</span>${deep ? ' (딥토크: 분석 모델 사용)' : ''} · 🔊 ${esc(st.voiceName)}</div>
+    </div>
+
+    ${!getApiKey() ? `
+    <div class="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-100 flex items-center justify-between gap-3">
+      <span>🔑 대화하려면 Gemini API 키가 필요해요</span>
+      <button data-action="openSettings" class="tap shrink-0 px-3 rounded-lg bg-amber-400 text-slate-950 font-bold">⚙️ 설정</button>
+    </div>` : ''}
+    <button data-action="startSession" class="tap w-full h-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-lg font-black glow-emerald">⚔️ 대화 시작</button>
+    <p class="text-[11px] text-slate-500 text-center">무료 등급에서는 대화 내용이 Google 제품 개선에 사용될 수 있어요. 민감한 개인정보는 말하지 마세요.</p>
+  </div>`;
+}
+
+function talkShellHtml() {
+  const t = S.topic, tr = TRACKS[t.track] || CUSTOM_TRACK, stg = STAGES[S.stage];
+  return `
+  <div class="relative h-full flex flex-col">
+    <div class="shrink-0 px-3 md:px-5 py-2 border-b border-slate-800 bg-slate-900/70 flex items-center gap-3">
+      <div class="min-w-0 flex-1">
+        <div class="text-[11px] text-slate-400 truncate">${tr.emoji} ${stg.icon} ${stg.label}${S.isRandom ? ' · 🎲 +30%' : ''}${S.onCooldown ? ' · ⏳ 50%' : ''} · <span id="talkModel" class="font-mono">${esc(modelForRole(S.chatRole))}</span></div>
+        <div class="font-semibold truncate">${esc(t.title)}</div>
+      </div>
+      <div class="text-right shrink-0">
+        <div id="timerText" class="font-mono text-2xl font-bold tabular-nums text-emerald-300 leading-none">--:--</div>
+        <div id="timerState" class="text-[10px] text-slate-400 mt-1">…</div>
+      </div>
+    </div>
+    <div class="h-1 bg-slate-800 shrink-0"><div id="timerBar" class="h-full bg-emerald-400 transition-[width] duration-300" style="width:0%"></div></div>
+    <div class="shrink-0 flex items-center gap-2 px-3 md:px-5 py-1.5 border-b border-slate-800/60 overflow-x-auto scroll-thin">
+      <button data-action="openSos" class="tap shrink-0 rounded-xl border border-amber-400/50 bg-amber-400/10 text-amber-200 px-3 text-sm font-semibold">⏸️ SOS 표현</button>
+      <button data-action="toggleSubtitles" id="subToggle" class="tap shrink-0 rounded-xl border border-slate-700 px-3 text-sm">${state.settings.showSubtitles ? '💬 자막 ON' : '🙈 자막 OFF'}</button>
+      <button data-action="replayLast" class="tap shrink-0 rounded-xl border border-slate-700 px-3 text-sm">🔁 다시 듣기</button>
+      <button data-action="endSession" class="tap shrink-0 ml-auto rounded-xl border border-rose-500/50 bg-rose-500/10 text-rose-200 px-3 text-sm font-semibold">■ 대화 종료</button>
+    </div>
+    <div id="chatLog" class="flex-1 min-h-0 overflow-y-auto scroll-thin px-3 md:px-5 py-4 space-y-3"></div>
+    <div id="talkControls" class="shrink-0 border-t border-slate-800 bg-slate-900/80 px-3 md:px-5 py-2.5"></div>
+    <div id="hudPanel" class="shrink-0 border-t border-emerald-500/30 bg-slate-950/95">
+      <button data-action="toggleHud" class="w-full min-h-[40px] flex items-center justify-between px-3 md:px-5 py-1.5 text-sm">
+        <span class="flex items-center font-semibold text-emerald-300">⚡ 실시간 교정 HUD<span id="hudBadge"></span></span>
+        <span id="hudChevron" class="text-xs text-slate-400">접기 ▾</span>
+      </button>
+      <div id="hudList" class="px-3 md:px-5 pb-3 space-y-2 overflow-y-auto scroll-thin max-h-[28vh] md:max-h-[34vh]"></div>
+    </div>
+    <div id="pauseOverlay" class="hidden absolute inset-0 z-20 bg-slate-950/85 backdrop-blur items-center justify-center p-6">
+      <div class="text-center space-y-3">
+        <div class="text-4xl">⏸️</div>
+        <div class="text-lg font-bold">일시정지됨</div>
+        <div class="text-sm text-slate-400">앱이 백그라운드로 전환돼 타이머를 멈췄어요</div>
+        <button data-action="resumeBg" class="tap px-6 rounded-xl bg-emerald-500 text-slate-950 font-bold">▶️ 대화 재개</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+const personaName = stage => STAGES[stage].persona.split(',')[0];
+function aiBubbleHtml(text, idx, animate) {
+  const hidden = !state.settings.showSubtitles;
+  return `
+  <div class="flex gap-2 items-start ${animate ? 'fade-in' : ''}">
+    <div class="shrink-0 w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">${STAGES[S.stage].icon}</div>
+    <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-800/80 border border-slate-700 px-3.5 py-2.5">
+      <p data-action="revealSub" class="ai-sub leading-relaxed break-words ${hidden ? 'blurred-sub' : ''}">${esc(text)}</p>
+      <div class="flex items-center gap-2 text-[11px] text-slate-500">
+        <span>${esc(personaName(S.stage))}</span>
+        <button data-action="replayIdx" data-idx="${idx}" class="tap -my-2 px-1 text-slate-400 hover:text-emerald-300">🔁 다시 듣기</button>
+        <span class="sub-hint ${hidden ? '' : 'hidden'}">· 탭하면 자막</span>
+      </div>
+    </div>
+  </div>`;
+}
+function userBubbleHtml(text, inputType, animate) {
+  const icon = inputType === 'audio' ? '🎙️' : inputType === 'stt' ? '⚡' : '⌨️';
+  return `
+  <div class="flex justify-end ${animate ? 'fade-in' : ''}">
+    <div class="max-w-[85%] rounded-2xl rounded-tr-sm bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-2.5">
+      <p class="leading-relaxed break-words text-emerald-50">${esc(text)}</p>
+      <div class="text-[11px] text-emerald-300/60 text-right mt-1">${icon} 나</div>
+    </div>
+  </div>`;
+}
+function renderChatLog() {
+  const box = $('#chatLog');
+  if (!box || !S) return;
+  box.innerHTML = S.log.length
+    ? S.log.map((m, i) => (m.role === 'ai' ? aiBubbleHtml(m.text, i, false) : userBubbleHtml(m.text, m.inputType, false))).join('')
+    : '';
+  box.scrollTop = box.scrollHeight;
+}
+function appendAiBubble(text) {
+  if (!S) return;
+  S.log.push({ role: 'ai', text });
+  const box = $('#chatLog');
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', aiBubbleHtml(text, S.log.length - 1, true));
+  box.scrollTop = box.scrollHeight;
+}
+function appendUserBubble(text, inputType) {
+  if (!S) return;
+  S.log.push({ role: 'user', text, inputType });
+  const box = $('#chatLog');
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', userBubbleHtml(text, inputType, true));
+  box.scrollTop = box.scrollHeight;
+}
+function applySubtitles() {
+  const hidden = !state.settings.showSubtitles;
+  $$('.ai-sub').forEach(el => el.classList.toggle('blurred-sub', hidden));
+  $$('.sub-hint').forEach(el => el.classList.toggle('hidden', !hidden));
+  const b = $('#subToggle');
+  if (b) b.textContent = hidden ? '🙈 자막 OFF' : '💬 자막 ON';
+}
+function lastAiText() {
+  return [...(S?.log || [])].reverse().find(m => m.role === 'ai')?.text || '';
+}
+
+function updateLevelMeter(level, elapsedMs) {
+  const bar = $('#levelBar'), sec = $('#recSec');
+  if (bar) bar.style.width = `${Math.round(level * 100)}%`;
+  if (sec) sec.textContent = `${(elapsedMs / 1000).toFixed(1)}s`;
+}
+
+function renderControls() {
+  const box = $('#talkControls');
+  if (!box || !S) return;
+  const prevInput = $('#talkInput');
+  if (prevInput) S.draftText = prevInput.value;
+  const st = S.status, mode = state.settings.inputMode;
+  const modes = Object.entries(INPUT_MODES).filter(([k]) => k !== 'browserStt' || SR);
+  const modeSwitch = `<div class="flex gap-1">${modes.map(([k, m]) => `
+    <button data-action="switchMode" data-mode="${k}" ${st === 'listening' ? 'disabled' : ''} title="${m.label}"
+      class="h-9 min-w-[40px] px-2 rounded-lg text-xs border ${k === mode ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-200' : 'border-slate-700 text-slate-400'}">${m.icon}<span class="hidden sm:inline ml-1">${m.label}</span></button>`).join('')}</div>`;
+  let hint = '';
+  if (mode === 'record') hint = state.settings.autoStopOnSilence ? '탭: 시작 · 다시 탭/무음 2초: 전송' : '탭: 시작 · 다시 탭: 전송';
+  else if (mode === 'browserStt') hint = '⚠️ 텍스트만 전송 · 발음 평가 불가';
+  else hint = 'Enter 전송 · Shift+Enter 줄바꿈';
+
+  const micBtn = (cls, label) => `<button data-action="micTap" class="shrink-0 w-16 h-16 rounded-full text-2xl font-bold ${cls}">${label}</button>`;
+  const textArea = `
+    <div class="flex items-end gap-2">
+      <textarea id="talkInput" rows="2" class="flex-1 min-w-0 rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2 resize-none" placeholder="영어로 답해 보세요…" autocapitalize="sentences">${esc(S.draftText || '')}</textarea>
+      <button data-action="sendTyped" class="tap shrink-0 h-12 px-4 rounded-xl bg-emerald-500 text-slate-950 font-bold">전송</button>
+    </div>`;
+
+  let body = '';
+  if (st === 'opening' || st === 'processing' || st === 'closing') {
+    const loadingVoice = st === 'processing' && S.ttsAbort && !S.ttsAbort.signal.aborted && S.log.length && S.log[S.log.length - 1].role === 'ai';
+    const label = st === 'opening' ? 'AI가 첫 질문을 준비 중' : st === 'closing' ? 'AI가 마무리 인사를 준비 중' : loadingVoice ? '🔊 음성 불러오는 중' : 'AI가 듣고 답을 생각 중';
+    body = `
+      <div class="flex items-center justify-between gap-3 min-h-[64px]">
+        <div class="flex items-center gap-3 text-slate-300"><span class="inline-block spin text-xl">⏳</span><span>${label}<span class="dots"></span></span></div>
+        ${loadingVoice ? `<button data-action="skipSpeech" class="tap shrink-0 px-3 rounded-lg border border-slate-700 text-xs text-slate-300">⏭ 음성 건너뛰기</button>` : ''}
+      </div>`;
+  } else if (st === 'speaking') {
+    body = `
+      <div class="flex items-center justify-between gap-3 min-h-[64px]">
+        <div class="flex items-center gap-2 text-emerald-200"><span class="text-xl">🔊</span><span>${esc(personaName(S.stage))}가 말하는 중 <span class="text-[11px] text-slate-500">${S.ttsMode === 'browser' ? '(브라우저 음성)' : '(Gemini 음성)'}</span></span></div>
+        <div class="flex items-center gap-2">
+          <button data-action="skipSpeech" class="tap px-3 rounded-lg border border-slate-700 text-xs text-slate-300">⏭ 건너뛰기</button>
+          ${mode !== 'keyboard' ? micBtn('bg-emerald-500/80 text-slate-950 text-xl', mode === 'record' ? '🎙️' : '⚡') : ''}
+        </div>
+      </div>
+      ${mode === 'keyboard' ? textArea : ''}`;
+  } else if (st === 'listening') {
+    if (S.sttActive) {
+      body = `
+        <div class="flex items-center gap-3 min-h-[64px]">
+          ${micBtn('bg-rose-500 text-white mic-live', '⏹')}
+          <div class="flex-1 min-w-0">
+            <div id="sttInterim" class="text-sm text-slate-200 break-words">듣는 중…</div>
+            <div class="text-[11px] text-slate-500 mt-1">⚡ 브라우저 음성 인식 중 · 탭하면 전송</div>
+          </div>
+          <button data-action="cancelListen" class="tap shrink-0 px-3 rounded-lg border border-slate-700 text-xs text-slate-300">취소</button>
+        </div>`;
+    } else {
+      body = `
+        <div class="flex items-center gap-3 min-h-[64px]">
+          ${micBtn('bg-rose-500 text-white mic-live', '⏹')}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between text-sm"><span class="text-rose-200 font-semibold">● 녹음 중 — 다 말하면 탭</span><span id="recSec" class="font-mono text-xs text-slate-400">0.0s</span></div>
+            <div class="h-2 mt-2 rounded-full bg-slate-800 overflow-hidden"><div id="levelBar" class="level-bar h-full bg-gradient-to-r from-emerald-400 to-amber-300" style="width:0%"></div></div>
+            <div class="text-[11px] text-slate-500 mt-1">${state.settings.autoStopOnSilence ? '🤫 2초간 조용하면 자동 전송' : '자동 전송 꺼짐'}</div>
+          </div>
+          <button data-action="cancelListen" class="tap shrink-0 px-3 rounded-lg border border-slate-700 text-xs text-slate-300">취소</button>
+        </div>`;
+    }
+  } else if (st === 'openingFailed') {
+    body = `
+      <div class="flex items-center justify-between gap-3 min-h-[64px]">
+        <span class="text-sm text-rose-200">⚠️ 첫 질문을 받지 못했어요</span>
+        <button data-action="retryOpening" class="tap px-4 rounded-xl bg-emerald-500 text-slate-950 font-bold">🔁 다시 시도</button>
+      </div>`;
+  } else { // ready
+    const extra = [
+      S.lastFailedInput ? `<button data-action="retryTurn" class="tap px-3 rounded-lg border border-amber-400/50 bg-amber-400/10 text-amber-200 text-xs font-semibold">🔁 방금 답변 다시 보내기</button>` : '',
+      S.timeUp ? `<span class="text-xs text-rose-200">⏰ 시간 종료 — 마지막 답변을 보내면 마무리돼요</span>` : ''
+    ].filter(Boolean).join('');
+    if (mode === 'keyboard') {
+      body = `${textArea}${extra ? `<div class="flex flex-wrap items-center gap-2 mt-2">${extra}</div>` : ''}`;
+    } else {
+      body = `
+        <div class="flex items-center gap-3 min-h-[64px]">
+          ${micBtn('bg-emerald-500 hover:bg-emerald-400 text-slate-950 glow-emerald', mode === 'record' ? '🎙️' : '⚡')}
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold text-emerald-200">당신 차례! 탭해서 말하기</div>
+            <div class="text-[11px] text-slate-500">3초 안에 입을 떼 보세요 · 막히면 ⏸️ SOS</div>
+          </div>
+        </div>
+        ${extra ? `<div class="flex flex-wrap items-center gap-2 mt-1">${extra}</div>` : ''}`;
+    }
+  }
+  box.innerHTML = `
+    <div class="flex items-center justify-between gap-2 mb-1.5">${modeSwitch}<span class="text-[11px] text-slate-500 text-right">${hint}</span></div>
+    ${body}`;
+  updateTimerUI();
+}
+
+function reportViewHtml(r) {
+  const d = r.draft;
+  const t = d.topic;
+  if (r.status === 'loading') {
+    return `
+    <div class="max-w-xl mx-auto p-6 min-h-full flex flex-col items-center justify-center text-center gap-4">
+      <div class="text-5xl spin inline-block">🧠</div>
+      <div class="text-xl font-bold">전투 기록 분석 중<span class="dots"></span></div>
+      <div class="text-sm text-slate-400">${esc(t.title)} · ${d.turns.length}턴 · ${d.minutes}분</div>
+      <div class="text-xs text-slate-500">분석 모델 <span class="font-mono">${esc(modelForRole('analysis'))}</span> · thinking high</div>
+    </div>`;
+  }
+  if (r.status === 'error') {
+    return `
+    <div class="max-w-xl mx-auto p-6 space-y-4">
+      <div class="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-5">
+        <div class="text-lg font-bold">⚠️ 리포트를 만들지 못했어요</div>
+        <div class="text-sm text-rose-100/90 mt-1 break-words">${esc(r.error)}</div>
+        <div class="text-xs text-slate-400 mt-2">세션 데이터(${d.turns.length}턴)는 이 기기에 보존돼 있어요. 네트워크·키·모델 설정을 확인한 뒤 다시 시도하세요.</div>
+      </div>
+      <div class="grid grid-cols-3 gap-2">
+        <button data-action="reportRetry" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold">🔁 다시 시도</button>
+        <button data-action="reportLater" class="tap rounded-xl border border-slate-700">나중에</button>
+        <button data-action="reportDiscard" class="tap rounded-xl border border-rose-500/40 text-rose-200">🗑 버리기</button>
+      </div>
+    </div>`;
+  }
+  const rep = r.report;
+  const tid = r.topicId;
+  const statsHtml = SIGNAL_KEYS.map(k => {
+    const v = rep.statScores[k];
+    return `
+    <div>
+      <div class="flex justify-between text-xs"><span class="text-slate-300">${STAT_LABELS[k]}</span><span class="font-mono ${v == null ? 'text-slate-500' : 'text-emerald-300'}">${v == null ? '발음 평가 없음' : v}</span></div>
+      <div class="h-2 rounded-full bg-slate-800 overflow-hidden mt-1"><div class="h-full ${v == null ? '' : 'bg-gradient-to-r from-emerald-500 to-emerald-300'}" style="width:${v == null ? 0 : v}%"></div></div>
+    </div>`;
+  }).join('');
+  const expFormula = `${d.minutes}분 × 10 × (${rep.overallScore}/80)${d.isRandom ? ' × 1.3 🎲' : ''}${d.onCooldown ? ' × 0.5 ⏳' : ''}`;
+  return `
+  <div class="max-w-3xl mx-auto p-4 md:p-6 space-y-4">
+    <div class="text-center pt-2">
+      <div class="text-xs text-slate-400">${(TRACKS[getTopic(tid)?.track] || CUSTOM_TRACK).emoji} ${esc(getTopic(tid)?.title || t.title)} · ${STAGES[d.stage].label} · ${d.turns.length}턴 · ${d.minutes}분</div>
+      <h2 class="text-2xl font-black mt-1">🏁 작전 완료 리포트</h2>
+    </div>
+
+    <div class="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/10 to-slate-900 p-5 glow-gold">
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <div class="rounded-2xl border border-amber-400/50 bg-slate-950/60 px-4 py-2 text-center"><div class="text-[11px] text-amber-300/80">TOEIC Speaking (예상)</div><div class="text-xl font-black text-amber-200">${esc(rep.estimatedGrade.toeicSpeaking)}</div></div>
+        <div class="rounded-2xl border border-amber-400/50 bg-slate-950/60 px-4 py-2 text-center"><div class="text-[11px] text-amber-300/80">OPIc (예상)</div><div class="text-xl font-black text-amber-200">${esc(rep.estimatedGrade.opic)}</div></div>
+      </div>
+      <div class="text-[11px] text-center text-slate-400 mt-2">${esc(rep.estimatedGrade.noteKo)}</div>
+      <div class="flex items-center justify-center gap-6 mt-4">
+        <div class="score-ring w-28 h-28 rounded-full p-2" style="--p:${rep.overallScore}">
+          <div class="w-full h-full rounded-full bg-slate-950 flex flex-col items-center justify-center"><div class="text-3xl font-black text-emerald-300">${rep.overallScore}</div><div class="text-[10px] text-slate-500">/ 100</div></div>
+        </div>
+        <div id="expBox" class="text-center">
+          <div class="text-[11px] text-amber-300/80">획득 경험치</div>
+          <div class="text-3xl font-black text-amber-300">+<span id="expCount">0</span></div>
+          <div class="text-[10px] text-slate-500 mt-1">${esc(expFormula)}</div>
+          ${r.duplicate ? '<div class="text-[10px] text-slate-500">(이미 반영된 세션)</div>' : ''}
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 grid sm:grid-cols-2 gap-x-6 gap-y-3">${statsHtml}</div>
+
+    ${rep.top3.length ? `
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+      <h3 class="font-bold">🎯 내 문장 vs 원어민 Top ${rep.top3.length}</h3>
+      ${rep.top3.map(x => `
+        <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <div class="text-sm text-slate-400 break-words">🗣️ ${esc(x.mine)}</div>
+          <div class="text-emerald-300 font-semibold mt-1 break-words">✨ ${esc(x.native)}</div>
+          <div class="text-sm text-amber-100/90 mt-1">💡 ${esc(x.whyKo)}</div>
+          <div class="flex justify-end gap-2 mt-2">
+            <button data-action="speakText" data-text="${esc(x.native)}" class="tap rounded-lg border border-slate-700 px-3 text-xs">🔊</button>
+            ${dexSaveBtn({ type: 'report', original: x.mine, native: x.native, tipKo: x.whyKo, topicId: tid })}
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+
+    ${rep.keyExpressions.length ? `
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+      <h3 class="font-bold">🗡️ 핵심 표현 ${rep.keyExpressions.length}선</h3>
+      ${rep.keyExpressions.map(x => `
+        <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <div class="text-emerald-300 font-semibold break-words">${esc(x.expression)}</div>
+          <div class="text-sm text-slate-300 mt-0.5">${esc(x.meaningKo)}</div>
+          ${x.example ? `<div class="text-xs text-slate-400 italic mt-1">e.g. ${esc(x.example)}</div>` : ''}
+          <div class="flex justify-end gap-2 mt-2">
+            <button data-action="speakText" data-text="${esc(x.expression)}" class="tap rounded-lg border border-slate-700 px-3 text-xs">🔊</button>
+            ${dexSaveBtn({ type: 'report', original: x.meaningKo, native: x.expression, tipKo: x.example ? `e.g. ${x.example}` : '', topicId: tid })}
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4"><div class="text-sm font-bold text-emerald-300">💪 강점</div><p class="text-sm text-slate-200 mt-1">${esc(rep.strengthsKo || '—')}</p></div>
+      <div class="rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4"><div class="text-sm font-bold text-amber-300">🎯 다음 목표</div><p class="text-sm text-slate-200 mt-1">${esc(rep.nextFocusKo || '—')}</p></div>
+    </div>
+    ${r.newTopic ? `<div class="rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4 text-sm">✍️ <b>${esc(r.newTopic.title)}</b> 카드가 <b>Track ${r.newTopic.track}</b>에 내 토픽으로 저장됐어요.</div>` : ''}
+    <div class="grid grid-cols-3 gap-2 pb-4">
+      <button data-action="againTopic" data-id="${esc(tid)}" class="tap rounded-xl border border-slate-700 text-sm">🔁 같은 토픽</button>
+      <button data-action="goTopics" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold text-sm">🗺️ 다음 토픽</button>
+      <button data-action="goDex" class="tap rounded-xl border border-slate-700 text-sm">📚 도감</button>
+    </div>
+    <div class="text-[10px] text-slate-600 text-center pb-2">분석: ${esc(r.model || '')}</div>
+  </div>`;
+}
+
+function renderTalk() {
+  const root = $('#view-talk');
+  if (S) {
+    root.innerHTML = talkShellHtml();
+    renderChatLog();
+    renderHudList();
+    renderControls();
+    updatePauseOverlay();
+    updateMainScroll();
+    return;
+  }
+  updateMainScroll();
+  if (talk.report) { root.innerHTML = reportViewHtml(talk.report); return; }
+  if (talk.pending) { root.innerHTML = setupHtml(talk.pending); return; }
+  const pend = loadPendingReport();
+  if (pend) {
+    root.innerHTML = `
+    <div class="max-w-xl mx-auto p-6 space-y-4">
+      <div class="rounded-2xl border border-amber-400/40 bg-amber-400/5 p-5">
+        <div class="text-lg font-bold">🧾 완료되지 않은 리포트가 있어요</div>
+        <div class="text-sm text-slate-300 mt-1">${esc(pend.topic?.title || '')} · ${pend.turns.length}턴 · ${pend.minutes}분 · ${fmtDate(pend.startedAt)}</div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-action="generatePending" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold">📊 리포트 생성</button>
+        <button data-action="reportDiscard" class="tap rounded-xl border border-rose-500/40 text-rose-200">🗑 버리기</button>
+      </div>
+    </div>`;
+    return;
+  }
+  root.innerHTML = `
+  <div class="max-w-xl mx-auto p-6 min-h-full flex flex-col items-center justify-center text-center gap-3">
+    <div class="text-5xl">🎙️</div>
+    <div class="text-xl font-bold">진행 중인 대화가 없어요</div>
+    <div class="text-sm text-slate-400">토픽을 고르거나 랜덤으로 뽑아 작전을 시작하세요.</div>
+    <div class="grid grid-cols-2 gap-2 w-full mt-2">
+      <button data-action="goTopics" class="tap rounded-xl border border-slate-700">🗺️ 토픽 고르기</button>
+      <button data-action="smartRandom" class="tap rounded-xl bg-amber-400 text-slate-950 font-bold">🎲 스마트 랜덤</button>
+    </div>
+  </div>`;
+}
+
+// ---- 기록 화면 ----
+function renderRecords() {
+  const ss = state.sessions;
+  const totalMin = Math.round(ss.reduce((a, s) => a + (Number(s.minutes) || 0), 0) * 10) / 10;
+  const avgScore = ss.length ? Math.round(ss.reduce((a, s) => a + (Number(s.score) || 0), 0) / ss.length) : 0;
+  const tile = (label, value, cls = 'text-slate-100') => `<div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div class="text-[11px] text-slate-500">${label}</div><div class="text-2xl font-black ${cls} mt-1">${value}</div></div>`;
+  $('#view-records').innerHTML = `
+  <div class="max-w-4xl mx-auto p-4 md:p-6 space-y-4">
+    <h2 class="text-2xl font-bold">📊 기록</h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+      ${tile('최근 세션', `${ss.length}회`)}
+      ${tile('총 대화 시간', `${totalMin}분`, 'text-emerald-300')}
+      ${tile('평균 점수', ss.length ? `${avgScore}점` : '—')}
+      ${tile('누적 EXP', state.profile.exp.toLocaleString(), 'text-amber-300')}
+    </div>
+    <div class="space-y-2">
+      ${ss.length ? ss.map(s => {
+        const rs = s.reportSummary || {};
+        return `
+        <details class="rounded-2xl border border-slate-800 bg-slate-900/70">
+          <summary class="tap flex items-center gap-3 px-4 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold truncate">${esc(getTopic(s.topicId)?.title || s.topicTitle || '삭제된 토픽')}</div>
+              <div class="text-[11px] text-slate-500">${fmtDate(s.startedAt)} · ${STAGES[s.stage]?.label || ''} · ${s.minutes}분${rs.isRandom ? ' · 🎲' : ''}${rs.onCooldown ? ' · ⏳' : ''}</div>
+            </div>
+            <div class="text-right shrink-0">
+              <div class="font-bold text-emerald-300">${s.score}점</div>
+              <div class="text-[11px] text-amber-300">+${s.expGained} EXP</div>
+            </div>
+          </summary>
+          <div class="px-4 pb-4 text-sm space-y-2">
+            <div class="flex flex-wrap gap-2"><span class="${BADGE.gold}">TOEIC S ${esc(rs.toeicSpeaking || '—')}</span><span class="${BADGE.gold}">OPIc ${esc(rs.opic || '—')}</span><span class="${BADGE.slate}">${rs.turns || 0}턴 · ${rs.usedAudio ? '🎙️ 음성' : '⌨️ 텍스트'}</span></div>
+            ${rs.statScores ? `<div class="text-xs text-slate-400">${SIGNAL_KEYS.map(k => `${STAT_LABELS[k]} ${rs.statScores[k] == null ? '—' : rs.statScores[k]}`).join(' · ')}</div>` : ''}
+            ${rs.strengthsKo ? `<div><span class="text-emerald-300">💪</span> ${esc(rs.strengthsKo)}</div>` : ''}
+            ${rs.nextFocusKo ? `<div><span class="text-amber-300">🎯</span> ${esc(rs.nextFocusKo)}</div>` : ''}
+          </div>
+        </details>`;
+      }).join('') : `<div class="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400 text-sm">아직 기록이 없어요. 첫 대화를 시작해 보세요!</div>`}
+    </div>
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
+      <div class="font-semibold text-sm">💾 데이터 백업 / 기기 이동</div>
+      <div class="text-[11px] text-slate-500">세이브 코드에는 API 키가 절대 포함되지 않아요.</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-action="copySaveCode" class="tap rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm font-semibold">📤 세이브 코드 복사</button>
+        <button data-action="openImport" class="tap rounded-xl border border-slate-700 text-sm font-semibold">📥 불러오기</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---- 설정 ----
+function pickProModel() {
+  const ids = (runtime.modelList || []).map(m => m.id)
+    .filter(id => /pro/i.test(id) && !/tts|vision|image|embedding/i.test(id) && !isPaidModel(id));
+  const ver = id => parseFloat((/gemini-(\d+(?:\.\d+)?)/.exec(id) || [])[1] || 0);
+  ids.sort((a, b) => ver(b) - ver(a) || (/(preview|exp)/.test(a) ? 1 : 0) - (/(preview|exp)/.test(b) ? 1 : 0));
+  return ids[0] || HYBRID_ANALYSIS_FALLBACK;
+}
+function settingsHtml() {
+  const st = state.settings, m = st.models, key = getApiKey();
+  const inputCls = 'w-full rounded-lg bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 h-11';
+  const roleRow = (role, title, desc) => `
+    <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+      <div class="flex items-center justify-between gap-2"><div class="text-sm font-semibold">${title}</div><div class="text-[11px] text-slate-500 text-right">${desc}</div></div>
+      <select data-change="modelSelect" data-role="${role}" class="mt-2 ${inputCls}">
+        ${modelOptionsFor(role).map(id => `<option value="${esc(id)}" ${id === m[role] ? 'selected' : ''}>${esc(id)}${isPaidModel(id) ? ' 💰' : ''}</option>`).join('')}
+      </select>
+      <input data-change="modelInput" data-role="${role}" id="modelInput-${role}" value="${esc(m[role])}" class="mt-2 ${inputCls} font-mono text-sm" placeholder="모델 ID 직접 입력" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div id="paidWarn-${role}" class="${isPaidModel(m[role]) ? '' : 'hidden'} mt-2 text-xs text-amber-300">💰 무료 등급에서 사용 불가·과금될 수 있는 모델이에요</div>
+    </div>`;
+  return `
+  <div id="settingsBody" class="p-5 space-y-6">
+    <div class="flex items-center justify-between"><h3 class="text-xl font-bold">⚙️ 설정</h3><button data-action="closeTopModal" class="tap rounded-xl text-slate-400 hover:text-slate-100 text-lg" aria-label="닫기">✕</button></div>
+
+    <section class="space-y-2">
+      <h4 class="font-semibold">🔑 Gemini API 키</h4>
+      <div class="flex gap-2">
+        <input id="apiKeyInput" type="password" value="${esc(key)}" placeholder="AIza..." class="${inputCls} font-mono text-sm" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+        <button data-action="toggleKeyVis" class="tap shrink-0 rounded-lg border border-slate-700" aria-label="키 보기">👁</button>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button data-action="saveApiKey" class="tap px-4 rounded-lg bg-emerald-500 text-slate-950 font-bold text-sm">💾 키 저장 + 모델 조회</button>
+        <a href="${AI_STUDIO_URL}" target="_blank" rel="noopener" class="tap inline-flex items-center px-3 rounded-lg border border-slate-700 text-sm text-slate-300">🔗 Google AI Studio에서 발급</a>
+      </div>
+      <p class="text-[11px] text-slate-500">키는 이 기기의 <span class="font-mono">localStorage['rpg_secrets']</span>에만 저장되고, 세이브 코드·내보내기에는 절대 포함되지 않아요.</p>
+      <div class="rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-100/90">⚠️ 무료 등급에서는 대화 내용이 Google 제품 개선에 사용될 수 있어요. 민감한 개인정보는 말하지 마세요.</div>
+    </section>
+
+    <section class="space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <h4 class="font-semibold">🤖 모델</h4>
+        <button data-action="fetchModels" class="tap px-3 rounded-lg border border-slate-700 text-sm">🔄 모델 목록 조회</button>
+      </div>
+      <div id="modelListStatus" class="text-[11px] text-slate-500">${runtime.modelList ? `✅ generateContent 지원 모델 ${runtime.modelList.length}개 조회됨` : '키 저장 시 자동 조회 · 조회 실패 시 기본 모델만 표시돼요'}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <button data-action="applyPreset" data-preset="hybrid" class="tap rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm px-2">⚡ 하이브리드: 회화 Flash / 분석 Pro급</button>
+        <button data-action="applyPreset" data-preset="speed" class="tap rounded-xl border border-slate-700 text-sm px-2">🚀 속도 우선: 전부 Flash</button>
+        <button data-action="applyPreset" data-preset="custom" class="tap rounded-xl border border-slate-700 text-sm px-2">🔧 직접 지정</button>
+      </div>
+      ${roleRow('chat', '💬 회화·HUD 모델', '빠른 응답 · thinking 낮게')}
+      ${roleRow('analysis', '🧠 분석 모델', '리포트·토픽 생성·보스 평가 · thinking 높게')}
+      ${roleRow('tts', '🔊 음성(TTS) 모델', 'AI 대사 읽기')}
+      <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-sm font-semibold">🛟 폴백 체인 <span class="text-[11px] text-slate-500 font-normal">429·5xx·404·미지원 시 순서대로 재시도 (쉼표/줄바꿈 구분)</span></div>
+        <textarea data-change="fallbackChain" rows="3" class="mt-2 w-full rounded-lg bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none px-3 py-2 font-mono text-sm" autocapitalize="off" spellcheck="false">${esc(m.fallbackChain.join('\n'))}</textarea>
+      </div>
+      ${toggleRow('useAnalysisModelForDeepTalk', '🧠 딥토크에 분석 모델 사용', 'Stage 3~4 + Track 4 회화에 분석 모델 사용 (느리지만 깊게)')}
+    </section>
+
+    <section class="space-y-2">
+      <h4 class="font-semibold">🔊 음성</h4>
+      <div class="flex gap-2">
+        <select data-change="setting" data-key="voiceName" class="${inputCls}">
+          ${VOICES.map(v => `<option value="${v.name}" ${v.name === st.voiceName ? 'selected' : ''}>${v.name} — ${v.style}</option>`).join('')}
+        </select>
+        <button data-action="previewVoice" class="tap shrink-0 px-3 rounded-lg border border-slate-700 text-sm">▶️ 미리듣기</button>
+      </div>
+      ${toggleRow('showSubtitles', '💬 AI 자막 표시', '끄면 AI 대사를 가려 듣기 훈련')}
+    </section>
+
+    <section class="space-y-2">
+      <h4 class="font-semibold">🎙️ 회화</h4>
+      ${toggleRow('excludeWaitTime', '⏸ AI 대기 시간 제외', 'AI 응답 생성·TTS 로딩/재생 중엔 타이머 정지')}
+      ${toggleRow('autoStopOnSilence', '🤫 무음 2초 자동 전송', '녹음 모드에서 말이 끝나면 자동 종료')}
+    </section>
+
+    <section class="space-y-2">
+      <h4 class="font-semibold">💾 데이터</h4>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-action="copySaveCode" class="tap rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm font-semibold">📤 세이브 코드 복사</button>
+        <button data-action="openImport" class="tap rounded-xl border border-slate-700 text-sm font-semibold">📥 불러오기</button>
+      </div>
+      <button data-action="resetAll" class="tap w-full rounded-xl border border-rose-500/40 text-rose-300 text-sm">🧨 전체 기록 초기화 (API 키는 유지)</button>
+      <div class="text-[10px] text-slate-600 font-mono">device ${esc(state.meta.deviceId)} · state v${state.version}</div>
+    </section>
+  </div>`;
+}
+function openSettings() {
+  openModal(settingsHtml(), { id: 'settings', size: 'lg' });
+}
+function rerenderSettings() {
+  const body = $('#settingsBody');
+  if (!body) return;
+  const scroller = body.parentElement;
+  const top = scroller.scrollTop;
+  body.outerHTML = settingsHtml();
+  scroller.scrollTop = top;
+}
+async function saveApiKey() {
+  const v = ($('#apiKeyInput')?.value || '').trim();
+  setSecret('geminiApiKey', v);
+  if (!v) { toast('API 키를 지웠어요', 'info'); return; }
+  toast('🔑 API 키를 저장했어요', 'success');
+  await fetchModelsAction();
+  if (currentView === 'talk' && !S) renderTalk();
+}
+async function fetchModelsAction() {
+  const status = $('#modelListStatus');
+  if (status) status.textContent = '⏳ 모델 목록 조회 중…';
+  try {
+    const list = await fetchModelList();
+    toast(`✅ 모델 ${list.length}개를 불러왔어요`, 'success');
+  } catch (e) {
+    runtime.modelList = null;
+    toast(`모델 목록 조회 실패: ${e.message} (기본값 표시)`, 'warn', 6000);
+  }
+  rerenderSettings();
+}
+function setModel(role, id) {
+  id = normalizeModelId(id);
+  if (!id) { toast('모델 ID를 입력해 주세요', 'warn'); return; }
+  state.settings.models[role] = id;
+  saveState();
+  renderHeader();
+  const warn = $(`#paidWarn-${role}`);
+  if (warn) warn.classList.toggle('hidden', !isPaidModel(id));
+  if (isPaidModel(id)) toast(`💰 ${id}: 무료 등급에서 사용 불가·과금될 수 있어요`, 'warn', 6000);
+}
+function applyPreset(preset) {
+  const m = state.settings.models;
+  if (preset === 'hybrid') { m.chat = DEFAULT_MODELS.chat; m.analysis = pickProModel(); toast(`⚡ 하이브리드: 회화 ${m.chat} / 분석 ${m.analysis}`, 'success'); }
+  else if (preset === 'speed') { m.chat = DEFAULT_MODELS.chat; m.analysis = DEFAULT_MODELS.chat; toast('🚀 속도 우선: 회화·분석 모두 Flash', 'success'); }
+  else { toast('🔧 아래에서 역할별 모델을 직접 지정하세요', 'info'); $('#modelInput-chat')?.focus(); return; }
+  if (isPaidModel(m.analysis)) toast(`💰 ${m.analysis}: 무료 등급에서 사용 불가·과금될 수 있어요`, 'warn', 6000);
+  saveState();
+  renderHeader();
+  rerenderSettings();
+}
+function previewVoice() {
+  ensureAudioContext();
+  unlockSpeechSynthesis();
+  toast(`🔊 ${state.settings.voiceName} 미리듣기 불러오는 중…`, 'info', 2000);
+  speak("Hey! Ready to get some speaking reps in today? Let's do this.", { voice: state.settings.voiceName });
+}
+
+async function copySaveCode() {
+  const code = makeSaveCode();
+  try {
+    await navigator.clipboard.writeText(code);
+    toast(`📤 세이브 코드를 복사했어요 (${Math.max(1, Math.round(code.length / 1024))}KB)`, 'success');
+  } catch {
+    openModal(`
+      <div class="p-5 space-y-3">
+        <h3 class="text-lg font-bold">📤 세이브 코드</h3>
+        <p class="text-sm text-slate-400">자동 복사가 막혀 있어요. 아래 코드를 전체 선택해 복사하세요.</p>
+        <textarea readonly rows="6" onfocus="this.select()" class="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 font-mono text-xs break-all">${esc(code)}</textarea>
+        <button data-action="closeTopModal" class="tap w-full rounded-xl border border-slate-700">닫기</button>
+      </div>`);
+  }
+}
+function openImport() {
+  if (S) { toast('대화 중에는 불러올 수 없어요', 'warn'); return; }
+  runtime.importCandidate = null;
+  openModal(`
+    <div class="p-5 space-y-3">
+      <h3 class="text-lg font-bold">📥 세이브 코드 불러오기</h3>
+      <textarea id="importCode" rows="5" placeholder="${SAVE_PREFIX}..." class="w-full rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 outline-none p-3 font-mono text-xs" autocapitalize="off" spellcheck="false"></textarea>
+      <div id="importPreview"></div>
+      <div class="grid grid-cols-2 gap-2" id="importButtons">
+        <button data-action="closeTopModal" class="tap rounded-xl border border-slate-700">취소</button>
+        <button data-action="validateImport" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold">🔍 코드 확인</button>
+      </div>
+    </div>`, { id: 'import' });
+}
+function validateImport() {
+  try {
+    const inc = parseSaveCode($('#importCode')?.value);
+    runtime.importCandidate = inc;
+    $('#importPreview').innerHTML = `
+      <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm space-y-1">
+        <div>✅ 유효한 세이브 코드 (마지막 저장 ${fmtDate(inc.meta.updatedAt)})</div>
+        <div class="text-xs text-slate-400">EXP ${inc.profile.exp.toLocaleString()} · 세션 ${inc.sessions.length} · 도감 ${inc.dex.length} · 내 토픽 ${inc.customTopics.length}</div>
+      </div>`;
+    $('#importButtons').innerHTML = `
+      <button data-action="applyImport" data-mode="overwrite" class="tap rounded-xl border border-rose-500/40 text-rose-200 font-semibold">덮어쓰기</button>
+      <button data-action="applyImport" data-mode="merge" class="tap rounded-xl bg-emerald-500 text-slate-950 font-bold">합치기</button>`;
+  } catch (e) {
+    toast(e.message, 'error', 5000);
+  }
+}
+async function applyImport(mode) {
+  const inc = runtime.importCandidate;
+  if (!inc) return;
+  if (mode === 'overwrite') {
+    const ok = await showConfirm({ title: '덮어쓰기', body: '이 기기의 모든 기록이 세이브 코드 내용으로 바뀌어요. 계속할까요?', okText: '덮어쓰기', danger: true });
+    if (!ok) return;
+    const deviceId = state.meta.deviceId;
+    state = inc;
+    state.meta.deviceId = deviceId;
+  } else {
+    state = mergeStates(state, inc);
+  }
+  runtime.importCandidate = null;
+  persistNow();
+  closeModal('import');
+  rerenderSettings();
+  rerenderAll();
+  toast(mode === 'overwrite' ? '📥 세이브 코드로 덮어썼어요' : '📥 기록을 합쳤어요', 'success');
+}
+async function resetAll() {
+  const ok = await showConfirm({ title: '🧨 전체 초기화', body: 'EXP·기록·도감·내 토픽·설정이 모두 지워져요. 되돌릴 수 없어요.\n(API 키는 유지돼요)', okText: '초기화', danger: true });
+  if (!ok) return;
+  if (S) abortSession();
+  state = defaultState();
+  persistNow();
+  clearPendingReport();
+  talk.pending = null;
+  talk.report = null;
+  closeModal('settings');
+  rerenderAll();
+  toast('초기화했어요', 'info');
+}
+function rerenderAll() {
+  renderHeader();
+  renderNav();
+  if (currentView === 'talk') { if (!S) renderTalk(); }
+  else switchView(currentView);
+}
+
+function onSettingChanged(key) {
+  renderHeader();
+  if (key === 'showSubtitles') applySubtitles();
+  if (key === 'autoStopOnSilence' && S) renderControls();
+  if (key === 'excludeWaitTime' && S) updateTimerUI();
+  if (!S && talk.pending && currentView === 'talk') renderTalk();
+}
+
+// ===== [SECTION: INIT] =====
+const ACTIONS = {
+  nav: el => switchView(el.dataset.view),
+  goTopics: () => { talk.report = null; switchView('topics'); },
+  goDex: () => { talk.report = null; switchView('dex'); },
+  goStageTopics: () => switchView('topics'),
+  openSettings: () => openSettings(),
+  closeTopModal: () => closeTopModal(),
+
+  setStage: el => {
+    state.settings.stage = clampInt(el.dataset.stage, 1, 4, 1);
+    saveState();
+    renderHeader();
+    renderTopics();
+  },
+  startCustomTopic: () => startCustomTopic(),
+  smartRandom: () => smartRandom(),
+  pickTopic: el => pickTopic(el.dataset.id),
+  deleteCustomTopic: (el, e) => { e.stopPropagation(); return deleteCustomTopic(el.dataset.id); },
+
+  cancelSetup: () => { talk.pending = null; switchView('topics'); },
+  setTimer: el => { state.settings.timerPreset = Number(el.dataset.min); saveState(); renderTalk(); },
+  setInputMode: el => {
+    const mode = el.dataset.mode;
+    if (mode === 'browserStt' && !SR) { toast('이 브라우저는 음성 인식을 지원하지 않아요', 'warn'); return; }
+    state.settings.inputMode = mode;
+    saveState();
+    renderTalk();
+  },
+  startSession: () => startSession(),
+  retryOpening: () => requestOpening(),
+
+  micTap: () => micTap(),
+  cancelListen: () => cancelListening(),
+  sendTyped: () => sendTyped(),
+  retryTurn: () => retryTurn(),
+  switchMode: el => switchInputMode(el.dataset.mode),
+  skipSpeech: () => skipSpeech(),
+  replayLast: () => { const t = lastAiText(); if (t) return replayText(t); toast('다시 들을 대사가 없어요', 'info'); },
+  replayIdx: el => replayText(S?.log[Number(el.dataset.idx)]?.text),
+  revealSub: el => { if (!state.settings.showSubtitles) el.classList.toggle('blurred-sub'); },
+  toggleSubtitles: () => { state.settings.showSubtitles = !state.settings.showSubtitles; saveState(); applySubtitles(); },
+  toggleHud: () => toggleHud(),
+  endSession: () => endSessionManual(),
+  resumeBg: () => resumeFromBackground(),
+
+  openSos: () => openSos(),
+  closeSos: () => closeSos(),
+  askSos: () => askSos(),
+  sosMic: () => sosMic(),
+  speakText: el => {
+    ensureAudioContext();
+    unlockSpeechSynthesis();
+    const text = el.dataset.text;
+    if (S && S.status === 'ready' && !S.pauses.size) return replayText(text);
+    if (S && S.status !== 'ready' && !S.pauses.has('sos')) { toast('AI 차례가 끝난 뒤 들어 주세요', 'info'); return; }
+    return speak(text);
+  },
+  saveDex: el => saveDexFromButton(el),
+  deleteDex: el => deleteDex(el.dataset.id),
+
+  reportRetry: () => generateReport(talk.report?.draft || loadPendingReport()),
+  reportLater: () => { talk.report = null; switchView('topics'); toast('🧾 리포트는 🎙️ 대화 탭에서 나중에 생성할 수 있어요', 'info'); },
+  reportDiscard: () => discardReport(),
+  generatePending: () => generateReport(loadPendingReport()),
+  againTopic: el => { talk.report = null; return pickTopic(el.dataset.id); },
+
+  copySaveCode: () => copySaveCode(),
+  openImport: () => openImport(),
+  validateImport: () => validateImport(),
+  applyImport: el => applyImport(el.dataset.mode),
+  resetAll: () => resetAll(),
+  saveApiKey: () => saveApiKey(),
+  toggleKeyVis: () => { const i = $('#apiKeyInput'); if (i) i.type = i.type === 'password' ? 'text' : 'password'; },
+  fetchModels: () => fetchModelsAction(),
+  applyPreset: el => applyPreset(el.dataset.preset),
+  previewVoice: () => previewVoice()
+};
+
+function handleActionError(err) {
+  if (isAbort(err)) return;
+  console.error(err);
+  toast(`오류: ${err?.message || err}`, 'error', 5000);
+}
+function runAction(el, e) {
+  const fn = ACTIONS[el.dataset.action];
+  if (!fn) return;
+  // iOS 오디오 잠금 해제를 위해 반드시 이벤트 핸들러 안에서 동기적으로 호출한다
+  try {
+    const r = fn(el, e);
+    if (r && typeof r.catch === 'function') r.catch(handleActionError);
+  } catch (err) { handleActionError(err); }
+}
+
+function bindEvents() {
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-action]');
+    if (!el || el.disabled) return;
+    if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') e.preventDefault();
+    runAction(el, e);
+  });
+
+  document.addEventListener('keydown', e => {
+    const t = e.target;
+    if (e.key === 'Escape') {
+      const top = modalStack[modalStack.length - 1];
+      if (top && top.dismissible) closeModal(top.id);
+      return;
+    }
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+    if (t.matches?.('[role="button"][data-action]')) { e.preventDefault(); runAction(t, e); return; }
+    if (t.id === 'talkInput' && !e.shiftKey) { e.preventDefault(); sendTyped(); return; }
+    if (t.id === 'customTopicInput') { e.preventDefault(); startCustomTopic(); return; }
+    if (t.id === 'sosInput' && !e.shiftKey) { e.preventDefault(); askSos(); }
+  });
+
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.id === 'talkInput' && S) { S.draftText = t.value; return; }
+    const key = t.dataset?.input;
+    if (key === 'dexSearch') { dexUi.q = t.value; renderDexList(); }
+    else if (key === 'customTopic') ui.customDraft = t.value;
+  });
+
+  document.addEventListener('change', e => {
+    const t = e.target;
+    const kind = t.dataset?.change;
+    if (!kind) return;
+    if (kind === 'setting') {
+      const key = t.dataset.key;
+      if (!(key in state.settings)) return;
+      state.settings[key] = t.type === 'checkbox' ? t.checked : (typeof state.settings[key] === 'number' ? Number(t.value) : t.value);
+      saveState();
+      onSettingChanged(key);
+    } else if (kind === 'modelSelect') {
+      const role = t.dataset.role;
+      const input = $(`#modelInput-${role}`);
+      if (input) input.value = t.value;
+      setModel(role, t.value);
+    } else if (kind === 'modelInput') {
+      setModel(t.dataset.role, t.value);
+    } else if (kind === 'fallbackChain') {
+      const list = uniq(t.value.split(/[\s,]+/).map(normalizeModelId).filter(Boolean));
+      if (!list.length) { toast('폴백 체인에 모델을 1개 이상 넣어 주세요', 'warn'); t.value = state.settings.models.fallbackChain.join('\n'); return; }
+      state.settings.models.fallbackChain = list;
+      saveState();
+      const paid = list.filter(isPaidModel);
+      toast(`🛟 폴백 체인 저장: ${list.join(' → ')}`, 'success');
+      if (paid.length) toast(`💰 ${paid.join(', ')}: 무료 등급에서 사용 불가·과금될 수 있어요`, 'warn', 6000);
+    } else if (kind === 'dexType') { dexUi.type = t.value; renderDexList(); }
+    else if (kind === 'dexTopic') { dexUi.topic = t.value; renderDexList(); }
+  });
+
+  // <details>의 toggle 이벤트는 버블링되지 않아 캡처 단계에서 받는다
+  document.addEventListener('toggle', e => {
+    const n = Number(e.target?.dataset?.track);
+    if (!n) return;
+    if (e.target.open) ui.openTracks.add(n); else ui.openTracks.delete(n);
+  }, true);
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pagehide', persistNow);
+  window.addEventListener('online', () => toast('🌐 다시 온라인이에요', 'success'));
+  window.addEventListener('offline', () => toast('📴 오프라인이에요. 진행 중인 기록은 보존돼요', 'warn', 5000));
+  window.addEventListener('error', e => {
+    const msg = e.message || '';
+    if (!msg || /ResizeObserver|Script error/i.test(msg)) return;
+    console.error(e.error || msg);
+    toastOnce(`err:${msg}`, `오류: ${msg}`, 'error');
+  });
+  window.addEventListener('unhandledrejection', e => {
+    if (isAbort(e.reason)) return;
+    console.error(e.reason);
+    toastOnce(`rej:${e.reason?.message}`, `오류: ${e.reason?.message || e.reason}`, 'error');
+  });
+}
+
+function init() {
+  loadState();
+  loadModelCache();
+  bindEvents();
+  renderHeader();
+  renderNav();
+  switchView('topics');
+  if ('speechSynthesis' in window) {
+    try { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices(); } catch {}
+  }
+  if (loadPendingReport()) setTimeout(() => toast('🧾 완료되지 않은 리포트가 있어요. 🎙️ 대화 탭에서 생성할 수 있어요', 'info', 6000), 400);
+  if (!getApiKey()) setTimeout(() => toast('👋 ⚙️ 설정에서 Gemini API 키를 먼저 입력해 주세요', 'info', 6000), 700);
+}
+
+init();
+</script>
+</body>
+</html>
