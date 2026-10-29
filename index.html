@@ -1010,12 +1010,14 @@ function usageRoles() {
 const usageColor = pct => (pct == null ? 'bg-slate-600' : pct >= 85 ? 'bg-rose-400' : pct >= 60 ? 'bg-amber-400' : 'bg-emerald-400');
 
 // ---- 모델 상태 기억 ----
-// 회화 호출 시간 제한: 첫 토큰이 10초 안에 안 오면 그 모델은 포기. 4초 안에 첫 토큰이 없으면 다음 모델에도 동시 요청(헤징).
+// 회화 호출 시간 제한: 첫 토큰이 10초 안에 안 오면 그 모델은 포기. 8초 안에 첫 토큰이 없으면 다음 모델에도 동시 요청(헤징).
+// (3.6-flash 첫 응답 1.7~7.1초 실측: 4초로 두면 절반 넘게 헤징돼 다음 모델의 하루 한도만 깎였다)
 // 첫 토큰 후 대사 완성까지 10초, 대사 도착 후 HUD까지 20초. 스트리밍이 아닌 회화 호출(SOS·첫 질문 미리 준비)은 응답 전체가 첫 토큰.
-const FAST = { hedgeMs: 4000, firstTokenMs: 10000, replyAfterTokenMs: 10000, afterReplyMs: 20000 };
+const FAST = { hedgeMs: 8000, firstTokenMs: 10000, replyAfterTokenMs: 10000, afterReplyMs: 20000 };
 const RETRY_503_DELAY_MS = 1000; // 503은 1초 뒤 같은 모델로 1회만 재시도, 그다음 폴백
 const SESSION_SKIP_AFTER = 2;    // 한 대화에서 연속 2번 실패한 모델은 대화가 끝날 때까지 건너뜀
-const MODEL_DOWN_MS = 3 * 60000;     // 503·429·5xx·시간초과·네트워크 오류 → 3분간 뒤로 미룸
+const MODEL_DOWN_MS = 3 * 60000;     // 503·429·5xx·네트워크 오류 → 3분간 뒤로 미룸
+const MODEL_HUNG_MS = 30 * 60000;    // 시간초과(응답이 아예 없음) → 30분간 뒤로 미룸
 const MODEL_MISSING_MS = 30 * 60000; // 404·미지원 → 30분간 뒤로 미룸
 const LS_MODEL_CAPS = 'rpg_model_caps';
 const modelHealth = new Map(); // model → { downUntil, reason }
@@ -1032,6 +1034,7 @@ function markModelDown(model, e) {
   if (e?.thinkingIssue) return; // thinking 값만 거부된 것 → 바뀐 값으로 다음 요청은 정상
   let ms = MODEL_DOWN_MS;
   if (e?.status === 404 || e?.status === 400) ms = MODEL_MISSING_MS;
+  if (e?.status === 'timeout') ms = MODEL_HUNG_MS;
   if (e?.status === 429 && e.retryDelay) ms = Math.max(ms, e.retryDelay * 1000);
   if (e?.daily) ms = Math.max(ms, nextQuotaReset() - Date.now()); // 하루 한도 소진 → 초기화 시각까지
   modelHealth.set(model, { downUntil: Date.now() + ms, reason: e?.daily ? '하루 한도' : shortReason(e) });
@@ -1185,14 +1188,26 @@ async function callGemini(opts = {}) {
       const t = performance.now();
       if (meta && meta.tReqStart == null) meta.tReqStart = t;
       const onUploaded = meta?.trackUpload ? at => { if (meta.tUploaded == null) meta.tUploaded = at; } : null;
+      // JSON 응답(리포트·토픽 생성·보스 평가 등)은 스트리밍으로 받아 첫 토큰 제한을 건다.
+      // 응답 자체가 없는 모델을 90초씩 기다리지 않도록. 첫 토큰이 오면 제한을 풀고 끝까지 받는다
+      const wantStream = !!(opts.schema && !opts.raw);
+      const ac = new AbortController();
+      const onOuterAbort = () => ac.abort();
+      signal?.addEventListener('abort', onOuterAbort, { once: true });
+      const firstTokenMs = FAST.firstTokenMs * (opts.thinking === 'high' ? 3 : 1) * (opts.timeScale || 1);
+      let timedOut = false;
+      const deadT = wantStream ? setTimeout(() => { timedOut = true; ac.abort(); }, firstTokenMs) : null;
       try {
-        const res = await attemptModel(model, { ...opts, wantStream: false, onUploaded, meta });
+        const res = await attemptModel(model, { ...opts, signal: ac.signal, wantStream, onFirstToken: () => clearTimeout(deadT), onUploaded, meta });
         markModelUp(model);
         noteSessionResult(model, true);
         logAttempt(meta, model, 'ok', t);
         finishMeta(meta, res, role, baseChain[0]);
         return res;
-      } catch (e) {
+      } catch (caught) {
+        const e = timedOut && isAbort(caught) && !signal?.aborted
+          ? new GeminiError(`첫 토큰 ${firstTokenMs / 1000}초 초과`, { status: 'timeout', retryable: true, model })
+          : caught;
         if (isAbort(e)) throw e;
         lastErr = e;
         logAttempt(meta, model, shortReason(e), t, e.message);
@@ -1201,6 +1216,9 @@ async function callGemini(opts = {}) {
         markModelDown(model, e);
         noteSessionResult(model, false);
         if (!quiet && e.status === 429) toastOnce(`429:${model}`, `⏳ ${model} 요청 한도 초과${e.retryDelay ? ` — ${Math.ceil(e.retryDelay)}초 후 재사용 가능` : ''}. 다른 모델로 전환할게요`, 'warn', 30000);
+      } finally {
+        clearTimeout(deadT);
+        signal?.removeEventListener('abort', onOuterAbort);
       }
     }
   }
@@ -1609,15 +1627,33 @@ async function prepareAudioForGemini(blob) {
 }
 
 // Gemini TTS 응답(Base64 16-bit PCM, little-endian, mono) → Float32 AudioBuffer
+// 모델에 따라 헤더 없는 PCM(audio/L16;rate=24000)이거나 WAV(audio/wav)로 온다. WAV는 앞에 RIFF 헤더,
+// 뒤에 C2PA(AI 생성 출처) 메타데이터 청크가 붙어 있어서 통째로 재생하면 문장 앞뒤로 큰 지지직 소리가 난다 → data 청크만 쓴다
 function pcm16Base64ToBuffer(b64, sampleRate = 24000) {
   const ctx = ensureAudioContext();
   if (!ctx) throw new Error('오디오 재생을 지원하지 않는 브라우저예요');
   const bin = atob(b64);
-  const len = bin.length >> 1;
+  let off = 0, end = bin.length;
+  if (bin.startsWith('RIFF') && bin.slice(8, 12) === 'WAVE') {
+    const u16 = i => bin.charCodeAt(i) | (bin.charCodeAt(i + 1) << 8);
+    const u32 = i => (u16(i) | (u16(i + 2) << 16)) >>> 0;
+    end = 0;
+    for (let pos = 12; pos + 8 <= bin.length;) {
+      const id = bin.slice(pos, pos + 4), size = u32(pos + 4);
+      if (id === 'fmt ') {
+        if (u16(pos + 8) !== 1 || u16(pos + 10) !== 1 || u16(pos + 22) !== 16) throw new Error('지원하지 않는 TTS 오디오 형식이에요');
+        sampleRate = u32(pos + 12) || sampleRate;
+      }
+      if (id === 'data') { off = pos + 8; end = Math.min(bin.length, off + size); break; }
+      pos += 8 + size + (size & 1);
+    }
+    if (!end) throw new Error('TTS 응답에 오디오 데이터가 없어요');
+  }
+  const len = (end - off) >> 1;
   const buffer = ctx.createBuffer(1, Math.max(1, len), sampleRate);
   const ch = buffer.getChannelData(0);
   for (let i = 0; i < len; i++) {
-    let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+    let v = bin.charCodeAt(off + 2 * i) | (bin.charCodeAt(off + 2 * i + 1) << 8);
     if (v >= 0x8000) v -= 0x10000;
     ch[i] = v / 32768;
   }
